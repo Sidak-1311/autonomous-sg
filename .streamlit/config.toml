@@ -3,14 +3,15 @@
 # src/tiering.py TIER_COLORS; the yellow accent never encodes data.
 [theme]
 base = "dark"
-primaryColor = "#FFD600"              # interface accent only: tabs, sliders, active states
+primaryColor = "#F2F2F2"              # white: widgets and progress bars never borrow the yellow accent,
+                                      # which style.py applies only to chrome (tab underline, marks, ticker)
 backgroundColor = "#101010"
 secondaryBackgroundColor = "#1A1A1A"
 textColor = "#F2F2F2"
 borderColor = "#262626"
 dataframeBorderColor = "#262626"
 dataframeHeaderBackgroundColor = "#161616"
-linkColor = "#FFD600"
+linkColor = "#F2F2F2"
 redColor = "#F2386F"                  # = CRITICAL
 orangeColor = "#FF8A3D"               # = ELEVATED
 yellowColor = "#FFD600"

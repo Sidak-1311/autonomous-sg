@@ -68,6 +68,69 @@ h1 {{ font-size: clamp(3rem, 7vw, 6.5rem) !important; font-weight: 800 !importan
 
 .pill {{ display: inline-block; padding: 0.12rem 0.65rem; border-radius: 999px; font: 600 0.72rem {FONT};
   letter-spacing: 0.08em; border: 1px solid currentColor; }}
+
+/* ---- page shell: no Streamlit chrome ---- */
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
+[data-testid="stAppDeployButton"], .stDeployButton {{ display: none !important; }}
+header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
+.block-container {{ padding: 1.4rem 2.6rem 6rem; }}
+[data-testid="stSidebar"] {{ background: #0C0C0C; border-right: 1px solid {LINE}; }}
+[data-testid="stSidebar"] label p {{ font: 600 0.72rem {FONT}; letter-spacing: 0.08em; text-transform: uppercase;
+  color: {MUTED}; }}
+
+/* top bar: wordmark left, status right, hairline under */
+.bm-top {{ display: flex; justify-content: space-between; align-items: center; padding-bottom: 1rem;
+  border-bottom: 1px solid {LINE}; }}
+.bm-top .mark {{ font: 800 1.15rem {FONT}; letter-spacing: -0.04em; }}
+.bm-top .mark i {{ font-style: normal; color: {ACCENT}; }}
+.bm-top .meta {{ display: flex; gap: 1.6rem; font: 600 0.68rem {FONT}; letter-spacing: 0.08em;
+  text-transform: uppercase; color: {MUTED}; }}
+.bm-top .meta b {{ color: {TEXT}; font-weight: 600; }}
+.bm-dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: {ACCENT};
+  margin-right: 0.45rem; vertical-align: 1px; box-shadow: 0 0 10px {ACCENT}; }}
+
+/* hero headline */
+.bm-display {{ font: 800 clamp(2.8rem, 5.6vw, 6.6rem) {FONT}; letter-spacing: -0.065em; line-height: 0.88;
+  margin: 2.4rem 0 1.4rem; color: {TEXT}; overflow-wrap: normal; word-break: keep-all; hyphens: none; }}
+.bm-display em {{ font-style: normal; color: {MUTED}; }}
+.bm-lede {{ font: 400 1.15rem/1.45 {FONT}; letter-spacing: -0.015em; color: {MUTED}; max-width: 34rem; }}
+.bm-lede b {{ color: {TEXT}; font-weight: 600; }}
+
+/* KPI row: big flat numbers on hairlines instead of boxed metrics */
+.st-key-kpis [data-testid="stMetric"] {{ background: transparent; border-radius: 0; padding: 0.9rem 0 0;
+  border-top: 1px solid {LINE}; }}
+.st-key-kpis [data-testid="stMetricValue"] {{ font-size: clamp(2.4rem, 4.2vw, 4.4rem); line-height: 0.95;
+  letter-spacing: -0.06em; }}
+.st-key-kpis-queue-depth [data-testid="stMetric"] {{ background: transparent; padding: 0.9rem 0 0;
+  border-top: 1px solid {LINE}; border-radius: 0; }}
+.st-key-kpis-queue-depth [data-testid="stMetricValue"] {{ font-size: clamp(4rem, 9vw, 9rem); line-height: 0.85;
+  letter-spacing: -0.07em; }}
+.st-key-kpi-critical [data-testid="stMetricValue"] {{ color: {TIER_COLORS["CRITICAL"]}; }}
+.st-key-kpi-elevated [data-testid="stMetricValue"] {{ color: {TIER_COLORS["ELEVATED"]}; }}
+.st-key-kpi-safe [data-testid="stMetricValue"] {{ color: {TIER_COLORS["SAFE"]}; }}
+
+/* scrolling ticker of the worst events */
+.bm-marquee {{ overflow: hidden; border-top: 1px solid {LINE}; border-bottom: 1px solid {LINE};
+  margin: 2.6rem -2.6rem 0; padding: 0.95rem 0; white-space: nowrap; }}
+.bm-marquee .track {{ display: inline-block; animation: bm-scroll 70s linear infinite; }}
+.bm-marquee:hover .track {{ animation-play-state: paused; }}
+.bm-marquee span {{ font: 600 0.85rem {FONT}; letter-spacing: 0.04em; text-transform: uppercase;
+  color: {MUTED}; margin-right: 3.2rem; }}
+.bm-marquee span b {{ color: {TEXT}; font-weight: 800; letter-spacing: -0.01em; }}
+@keyframes bm-scroll {{ from {{ transform: translateX(0); }} to {{ transform: translateX(-50%); }} }}
+@media (prefers-reduced-motion: reduce) {{ .bm-marquee .track {{ animation: none; }} }}
+
+/* filter chips stay neutral: the yellow accent never marks data */
+[data-baseweb="tag"] {{ background: {LINE} !important; border-radius: 999px !important; }}
+[data-baseweb="tag"] span {{ color: {TEXT} !important; font: 600 0.7rem {FONT}; letter-spacing: 0.06em; }}
+.stTabs [data-baseweb="tab"] p {{ font: 600 0.78rem {FONT} !important; letter-spacing: 0.08em;
+  text-transform: uppercase; }}
+.st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 2.2rem; }}
+
+/* tabs become a sticky top nav */
+.stTabs [data-baseweb="tab-list"] {{ position: sticky; top: 0; z-index: 50; background: {BG};
+  padding-top: 0.4rem; margin-top: 1.8rem; }}
+.stTabs [data-baseweb="tab-panel"] {{ padding-top: 0.6rem; }}
 </style>
 """
 
@@ -114,6 +177,21 @@ def hero_stat(value: str, caption: str, tier: str | None = None) -> str:
 
 def card(inner_html: str) -> str:
     return f'<div class="bm-card">{inner_html}</div>'
+
+
+def top_bar(meta: list[tuple[str, str]]) -> str:
+    """Wordmark plus uppercase status items, e.g. [('Split', 'test'), ('Events', '2,167')]."""
+    items = "".join(f"<span>{k} <b>{v}</b></span>" for k, v in meta)
+    return (f'<div class="bm-top"><span class="mark">Triage<i>—</i>TCA</span>'
+            f'<span class="meta"><span><span class="bm-dot"></span>Live queue</span>{items}</span></div>')
+
+
+def marquee(items: list[str]) -> str:
+    """Seamless scrolling ticker: the items are repeated so the loop has no gap."""
+    if not items:
+        return ""
+    track = "".join(f"<span>{i}</span>" for i in items) * 2
+    return f'<div class="bm-marquee"><div class="track">{track}</div></div>'
 
 
 _SUP = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
