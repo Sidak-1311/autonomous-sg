@@ -19,7 +19,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from src.physics import LEO_MEAN_MOTION, combined_sigma, dilution  # noqa: E402
-from src.score import _add_maneuver  # noqa: E402  (the pipeline's own maneuver rule, reused by the stub)
+from src.score import _add_maneuver, _add_review  # noqa: E402  (the pipeline's own rules, reused by the stub)
 from src.tiering import (  # noqa: E402
     CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, RISK_CRITICAL, RISK_ELEVATED, RISK_FLOOR, SAFE,
     TIER_COLORS, TIER_RANK, TIERS, rule_fired, tier_array,
@@ -40,7 +40,7 @@ def stub_from_raw(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     seen = cdms[cdms.time_to_tca >= DECISION_DAYS]
     latest = seen.loc[seen.groupby("event_id").time_to_tca.idxmin()]
     ev = latest.rename(columns={"risk": "risk_latest", "miss_distance": "miss_latest_m"}).drop(columns="tier")
-    ev["n_cdms"] = ev.event_id.map(cdms.groupby("event_id").size())
+    ev["n_cdms"] = ev.event_id.map(seen.groupby("event_id").size())  # CDMs up to the decision point
     ev["risk_forecast"] = ev["risk_forecast_q90"] = ev.risk_latest
     ev["miss_forecast_m"] = ev.miss_latest_m
     ev["tier_now"] = ev["tier_forecast"] = ev["tier_final"] = tier_array(ev.risk_latest, ev.miss_latest_m)
@@ -50,6 +50,8 @@ def stub_from_raw(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     ev["pc_diluted"], ev["risk_potential"] = dilution(ev.risk_latest, ev.miss_latest_m,
                                                       combined_sigma(ev.c_sigma_r, ev.t_sigma_r))
     _add_maneuver(ev)
+    ev["c_sigma_r_missing"], ev["t_sigma_r_missing"] = ev.c_sigma_r.isna().astype(int), ev.t_sigma_r.isna().astype(int)
+    _add_review(ev)
     return ev.reset_index(drop=True), cdms
 
 
@@ -64,6 +66,8 @@ def load(data_dir: str, stamp: tuple) -> tuple[pd.DataFrame, pd.DataFrame, str]:
             events = events.assign(pc_diluted=False, risk_potential=events.risk_latest)
         if "maneuver_dr_m" not in events:  # ... or the maneuver suggestion
             events = events.assign(maneuver_dr_m=np.nan, maneuver_dv_mps=np.nan)
+        if "needs_review" not in events:  # ... or the insufficient-evidence refusal
+            events = events.assign(needs_review=False, review_reason="")
         return events, cdms, f"pipeline output ({sources})"
     events, cdms = stub_from_raw(DATA / "test_data.csv")
     return events, cdms, "stub from test_data.csv (no pipeline output yet)"
@@ -98,7 +102,7 @@ def metrics_table(metrics: dict) -> pd.DataFrame:
                 row[name], row[f"{name} 95% CI"] = metrics[name][key], ci(metrics[name], key)
         if "baseline" in row and "model" in row:
             better = row["model"] > row["baseline"] if higher else row["model"] < row["baseline"]
-            row["model better?"] = "yes" if better else "no"
+            row["model better?"] = "same" if np.isclose(row["model"], row["baseline"]) else "yes" if better else "no"
         rows.append(row)
     return pd.DataFrame(rows).set_index("metric")
 
@@ -137,18 +141,21 @@ shown = events[(events.split == split) & events.tier_final.isin(tiers) & events.
 history = cdms[cdms.split == split]
 
 counts = shown.tier_final.value_counts()
-k = st.columns(4)
+review = shown.needs_review.astype(bool)
+k = st.columns(5)
 k[0].metric("Events", f"{len(shown):,}")
 for col, t in zip(k[1:], reversed(TIERS)):
     col.metric(t.title(), f"{counts.get(t, 0):,}")
-st.caption(f"{counts.get(CRITICAL, 0):,} events need a maneuver (CRITICAL: Pc ≥ 1e-4 or miss < 1 km at TCA).")
+k[4].metric("Needs analyst review", f"{int(review.sum()):,}")
+st.caption(f"{counts.get(CRITICAL, 0):,} events need a maneuver (CRITICAL: Pc ≥ 1e-4 or miss < 1 km at TCA). "
+           f"{int(review.sum()):,} have too little evidence to forecast; they stay in the queue whatever their tier.")
 
 queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
     ["Operations queue", "Event detail", "Fleet overview", "Next 24 hours", "Evaluation"])
 
 with queue_tab:
-    queue = queue_order(shown[shown.tier_final != SAFE])
-    st.dataframe(queue[["event_id", "tier_final", "tier_now", "p_critical", "risk_latest", "risk_forecast",
+    queue = queue_order(shown[(shown.tier_final != SAFE) | review])  # a refusal is never auto-cleared
+    st.dataframe(queue[["event_id", "tier_final", "needs_review", "tier_now", "p_critical", "risk_latest", "risk_forecast",
                         "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type", "pc_diluted", "reason", "drivers"]],
                  hide_index=True, width="stretch", column_config={
                      "p_critical": st.column_config.ProgressColumn("P(critical)", min_value=0, max_value=1),
@@ -157,6 +164,9 @@ with queue_tab:
                      "miss_latest_m": st.column_config.NumberColumn("miss now (m)", format="%d"),
                      "miss_forecast_m": st.column_config.NumberColumn("miss at TCA (m)", format="%d"),
                      "time_to_tca": st.column_config.NumberColumn("days to TCA", format="%.2f"),
+                     "needs_review": st.column_config.CheckboxColumn(
+                         "needs review", help="Too little evidence to forecast (one CDM, stale CDM or no "
+                                              "covariance): an analyst must look, even if the tier is SAFE."),
                      "pc_diluted": st.column_config.CheckboxColumn(
                          "Pc diluted", help="Low Pc only because tracking is poor. See Fleet overview for whether "
                                             "this predicted anything on known outcomes."),
@@ -164,18 +174,30 @@ with queue_tab:
 
     # Alert-fatigue curve: where outcomes are known (train), how many truly Critical events an analyst
     # catches by working this queue top-down, against how many events they have to review.
+    # The baseline ranks by the latest CDM alone (today's practice) and is always shown next to this queue.
     known = shown[shown.tier_actual.notna()]
-    hits = (queue_order(known).tier_actual == CRITICAL).cumsum().to_numpy()
-    if len(hits) and hits[-1]:
-        caught = hits / hits[-1]
-        k95 = int(np.argmax(caught >= 0.95)) + 1
+    if (known.tier_actual == CRITICAL).any():
+        in_sample = (known.forecast_source == "model").any()  # the model was fit on these very events
+        rankings = {"baseline: latest CDM": (known.assign(_r=known.tier_now.map(TIER_RANK))
+                                             .sort_values(["_r", "risk_latest"], ascending=False)),
+                    "this queue" + (" (in-sample)" if in_sample else ""): queue_order(known)}
         st.subheader("Alert fatigue: how far down the queue to go")
-        curve = px.line(x=np.arange(1, len(hits) + 1), y=caught,
-                        labels={"x": "events reviewed, worst first", "y": "share of actual Critical events caught"})
-        curve.add_vline(x=k95, line_dash="dot", annotation_text=f"95% caught after {k95:,}")
+        curve, k95 = go.Figure(), {}
+        for name, ranked in rankings.items():
+            hits = (ranked.tier_actual == CRITICAL).cumsum().to_numpy()
+            caught = hits / hits[-1]
+            k95[name] = int(np.argmax(caught >= 0.95)) + 1
+            curve.add_trace(go.Scatter(x=np.arange(1, len(hits) + 1), y=caught, name=name))
+        curve.update_layout(xaxis_title="events reviewed, worst first", yaxis_title="share of actual Critical events caught",
+                            legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(curve, width="stretch")
-        st.caption(f"Reviewing the top {k95:,} of {len(hits):,} events ({k95 / len(hits):.0%}) catches 95% of the "
-                   f"{int(hits[-1]):,} events that really ended Critical.")
+        n, (base, mine) = len(known), k95.values()
+        st.caption(f"To catch 95% of the {int((known.tier_actual == CRITICAL).sum()):,} events that really ended "
+                   f"Critical: top {mine:,} of {n:,} ({mine / n:.0%}) with this queue, top {base:,} ({base / n:.0%}) "
+                   "with the baseline ranking.")
+        if in_sample:
+            st.warning("In-sample: the model was trained on these events, so the queue's curve is optimistic. "
+                       "Use the Evaluation tab's out-of-fold numbers for claims.")
 
 with detail_tab:
     ranked = queue_order(shown)
@@ -189,7 +211,11 @@ with detail_tab:
         text = lambda v: v if isinstance(v, str) else ""  # parquet gives None/NaN for missing strings
         st.markdown(f"**{e.tier_final}** · {e.c_object_type} · {text(e.reason)}"
                     + (f"  \nDrivers: {e.drivers}" if text(e.drivers) else ""))
-        if pd.notna(e.maneuver_dr_m):  # the pipeline plans one for CRITICAL events only
+        forecast = not e.needs_review  # refuse: no forecast and no maneuver plan on thin evidence
+        if not forecast:
+            st.error(f"Insufficient evidence: {text(e.review_reason)}. No forecast or maneuver is shown; "
+                     "an analyst must review this event from its CDM history below.")
+        elif pd.notna(e.maneuver_dr_m):  # the pipeline plans one for CRITICAL events only
             if e.maneuver_dr_m == 0:
                 st.info("Suggested maneuver: none from geometry. The separation already clears the rules, so "
                         "the Critical tier comes from the forecast; an analyst decides.")
@@ -203,12 +229,15 @@ with detail_tab:
         a, b = st.columns(2)
         risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Risk per CDM update")
         tier_bands(risk, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
-        risk.add_trace(go.Scatter(x=[0], y=[e.risk_forecast], mode="markers", marker_symbol="diamond", name="forecast",
-                                  error_y=dict(type="data", array=[e.risk_forecast_q90 - e.risk_forecast], symmetric=False)))
         miss = px.line(path, x="time_to_tca", y="miss_distance", markers=True, log_y=True,
                        title="Miss distance per CDM update")
         tier_bands(miss, "y", (1, MISS_CRITICAL_M), (MISS_CRITICAL_M, MISS_ELEVATED_M))
-        miss.add_trace(go.Scatter(x=[0], y=[e.miss_forecast_m], mode="markers", marker_symbol="diamond", name="forecast"))
+        if forecast:
+            risk.add_trace(go.Scatter(x=[0], y=[e.risk_forecast], mode="markers", marker_symbol="diamond",
+                                      name="forecast", error_y=dict(type="data", symmetric=False,
+                                                                    array=[e.risk_forecast_q90 - e.risk_forecast])))
+            miss.add_trace(go.Scatter(x=[0], y=[e.miss_forecast_m], mode="markers", marker_symbol="diamond",
+                                      name="forecast"))
         for fig, final in ((risk, e.risk_final), (miss, e.miss_final_m)):
             if pd.notna(final):
                 fig.add_trace(go.Scatter(x=[0], y=[final], mode="markers", marker_symbol="x", name="actual at TCA"))

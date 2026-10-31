@@ -63,9 +63,12 @@ def test_stub_tiers_follow_the_rules_at_the_thresholds(tmp_path, monkeypatch):
     assert "stub" in at.sidebar.caption[0].value
     assert at.metric[0].value == "5"  # event 5 has no CDM at time_to_tca >= 2, so it can't be scored
     q = queue(at).set_index("event_id")
-    assert q.tier_final.to_dict() == {k: v for k, v in EXPECTED_STUB_TIERS.items() if v != "SAFE"}
+    assert q.tier_final.to_dict() == EXPECTED_STUB_TIERS  # SAFE event 4 is queued: it needs review
+    # Events 1-4 have one CDM up to the decision point (1 also lacks sigma); 0 has three.
+    assert q.needs_review.to_dict() == {0: False, 1: True, 2: True, 3: True, 4: True}
+    assert at.metric[4].value == "4"
     assert list(q.index[:1]) == [0]  # worst first
-    assert not q.pc_diluted.any()  # NaN sigma (event 1) is not flagged
+    assert q.pc_diluted.to_dict() == {0: False, 1: False, 2: False, 3: False, 4: True}  # NaN sigma (1) isn't flagged
     assert any(c.value.startswith("1 of 5 events are flagged") for c in at.caption)  # event 4
     assert any("can't be checked" in i.value for i in at.info)  # test data: no outcomes, no verdict
     assert any("No data/processed/metrics.json" in i.value for i in at.info)
@@ -76,7 +79,8 @@ def by_label(elements, label):
     return next(e for e in elements if e.label == label)
 
 
-def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None) -> Path:
+def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None,
+                   review: tuple = (False, True, False, False, True)) -> Path:
     """Contract-shaped pipeline output for events 0-4, train outcomes included; drop removes columns."""
     raw = RAW[RAW.event_id != 5]
     cdms = raw.assign(split="test", tier="SAFE")
@@ -93,6 +97,7 @@ def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None
         "pc_diluted": [False, False, True, False, True], "risk_potential": latest.risk + [0, 0, 3, 0, 2],
         # CRITICAL events only: event 0 needs a 250 m outward shift, event 3 is Critical by forecast alone
         "maneuver_dr_m": [250.0, np.nan, np.nan, 0.0, np.nan], "maneuver_dv_mps": [0.03, np.nan, np.nan, 0.0, np.nan],
+        "needs_review": list(review), "review_reason": ["only one CDM" if r else "" for r in review],
     })
     train = ev.assign(split="train", risk_final=-5.0, miss_final_m=800.0,
                       tier_actual=["CRITICAL", "SAFE", "SAFE", "CRITICAL", "SAFE"])
@@ -108,12 +113,14 @@ def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None
 def test_pipeline_output_with_missing_model_columns(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
     assert "pipeline output (model)" in at.sidebar.caption[0].value
-    assert list(queue(at).event_id) == [0, 3, 1]  # CRITICAL by p_critical (NaN last), then ELEVATED
+    # CRITICAL by p_critical (NaN last), then ELEVATED, then SAFE event 4 because it needs review
+    assert list(queue(at).event_id) == [0, 3, 1, 4]
     assert not any("Alert fatigue" in h.value for h in at.subheader)  # test split: outcomes unknown
     at.sidebar.selectbox[0].set_value("train").run()  # real outcomes drive the 24 h replay and the fatigue curve
     assert not at.exception, at.exception
     # Both actual Criticals (events 0 and 3) are the queue's first two rows.
-    assert any("top 2 of 5" in c.value for c in at.caption)
+    assert any("top 2 of 5" in c.value and "with the baseline ranking" in c.value for c in at.caption)
+    assert any(w.value.startswith("In-sample") for w in at.warning)  # forecast_source == "model" on train
     # Flagged events 2 and 4 both ended SAFE: the dashboard must report the flag's failure, not praise it.
     assert any("Measured failure" in w.value and "0.0% vs 66.7%" in w.value for w in at.warning)
     assert not at.success
@@ -135,6 +142,20 @@ def test_maneuver_suggestion(tmp_path, monkeypatch):
     assert any("none from geometry" in i.value for i in at.info)  # CRITICAL, but dr == 0
     by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # ELEVATED: no suggestion at all
     assert not any("Suggested maneuver" in m.value for m in [*at.warning, *at.info])
+    assert any("Insufficient evidence: only one CDM" in m.value for m in at.error)  # and it needs review
+
+
+def test_refusal_withholds_the_maneuver(tmp_path, monkeypatch):
+    # Event 0 is CRITICAL with a 250 m plan, but on thin evidence: no plan may be shown.
+    at = render(write_pipeline(tmp_path, review=(True, False, False, False, False)), monkeypatch)
+    assert any("Insufficient evidence" in m.value for m in at.error)
+    assert not any("Suggested maneuver" in m.value for m in [*at.warning, *at.info])
+
+
+def test_pipeline_output_from_before_the_refusal(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path, drop=("needs_review", "review_reason")), monkeypatch)
+    assert at.metric[4].value == "0" and not at.error
+    assert list(queue(at).event_id) == [0, 3, 1]  # SAFE events stay out of the queue
 
 
 def test_pipeline_output_from_before_the_maneuver_columns(tmp_path, monkeypatch):
@@ -164,7 +185,7 @@ def test_metrics_model_vs_baseline_respects_direction(tmp_path, monkeypatch):
     model = {**METRIC_RUN, "recall_critical": 0.95, "precision_critical": 0.7, "mse_hr": 9.0, "loss": 15.0}
     at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "model": model}), monkeypatch)
     verdict = metrics_panel(at)["model better?"].to_dict()
-    assert verdict == {"Critical recall": "yes", "Critical precision": "no", "F2 (high risk)": "no",
+    assert verdict == {"Critical recall": "yes", "Critical precision": "no", "F2 (high risk)": "same",
                        "MSE on high-risk events": "no", "loss = MSE / F2": "yes"}
     assert not any("No trained model yet" in i.value for i in at.info)
 
