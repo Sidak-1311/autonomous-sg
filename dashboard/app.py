@@ -83,6 +83,32 @@ def with_defaults(events: pd.DataFrame) -> pd.DataFrame:
     return events.assign(**{col: fill(events) for col, fill in LATER_COLUMNS.items() if col not in events})
 
 
+# Analyst sign-off: the system recommends, a named person decides, and every decision is logged with what
+# the system showed at the time. ponytail: an append-only CSV per laptop; move it to a shared store (the
+# room or a database) if several analysts sign the same queue.
+DECISIONS = DATA / "decisions.csv"
+DECISION_COLS = ["at_utc", "split", "event_id", "analyst", "decision", "note", "tier_final", "p_critical",
+                 "forecast_source"]
+CHOICES = ["Maneuver", "Monitor", "Dismiss"]
+
+
+def read_decisions() -> pd.DataFrame:
+    return pd.read_csv(DECISIONS) if DECISIONS.exists() else pd.DataFrame(columns=DECISION_COLS)
+
+
+def decision_problem(analyst: str, decision: str, note: str, e: pd.Series) -> str | None:
+    if not analyst.strip():
+        return "Enter your name: every decision is signed."
+    if decision == "Dismiss" and (e.tier_final == CRITICAL or e.needs_review) and not note.strip():
+        return "Dismissing a Critical or not-yet-reviewable event needs a note saying why."
+    return None
+
+
+def record_decision(row: dict):
+    pd.DataFrame([row], columns=DECISION_COLS).to_csv(DECISIONS, mode="a", header=not DECISIONS.exists(),
+                                                      index=False)
+
+
 @st.cache_data(show_spinner="Asking Gemini…")
 def cached_brief(fields_json: str) -> str:
     """Keyed on the exact fields sent, so reruns and repeat clicks don't call the API again."""
@@ -158,7 +184,13 @@ history = cdms[cdms.split == split]
 
 counts = shown.tier_final.value_counts()
 review = shown.needs_review.astype(bool)
-k = st.columns(5)
+decisions = read_decisions()
+latest_decision = (decisions[decisions.split == split].sort_values("at_utc")
+                   .groupby("event_id").decision.last())
+shown = shown.assign(decision=shown.event_id.map(latest_decision).fillna(""))
+queued = (shown.tier_final != SAFE) | review  # a refusal is never auto-cleared
+k = st.columns(6)
+k[5].metric("Awaiting a decision", f"{int((queued & (shown.decision == '')).sum()):,}")
 k[0].metric("Events", f"{len(shown):,}")
 for col, t in zip(k[1:], reversed(TIERS)):
     col.metric(t.title(), f"{counts.get(t, 0):,}")
@@ -170,8 +202,8 @@ queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
     ["Operations queue", "Event detail", "Fleet overview", "Next 24 hours", "Evaluation"])
 
 with queue_tab:
-    queue = queue_order(shown[(shown.tier_final != SAFE) | review])  # a refusal is never auto-cleared
-    st.dataframe(queue[["event_id", "tier_final", "needs_review", "tier_now", "p_critical", "risk_latest", "risk_forecast",
+    queue = queue_order(shown[queued])
+    st.dataframe(queue[["event_id", "tier_final", "decision", "needs_review", "tier_now", "p_critical", "risk_latest", "risk_forecast",
                         "miss_latest_m", "miss_forecast_m", "risk_hi", "time_to_tca", "c_object_type", "storm_flips", "pc_diluted",
                         "reason", "drivers"]],
                  hide_index=True, width="stretch", column_config={
@@ -182,7 +214,8 @@ with queue_tab:
                          "risk at TCA, 90% upper", format="%.2f",
                          help="Upper end of the conformal 90% interval on the final log10 Pc."),
                      "storm_flips": st.column_config.CheckboxColumn(
-                         "storm flips tier", help="Tier changes if F10/AP rise to geomagnetic-storm levels."),
+                         "storm-sensitive", help="Sensitivity, not a forecast: the tier changes if F10/AP rise "
+                                                 "to geomagnetic-storm levels."),
                      "miss_latest_m": st.column_config.NumberColumn("miss now (m)", format="%d"),
                      "miss_forecast_m": st.column_config.NumberColumn("miss at TCA (m)", format="%d"),
                      "time_to_tca": st.column_config.NumberColumn("days to TCA", format="%.2f"),
@@ -262,6 +295,25 @@ with detail_tab:
             st.caption("The model sees only these fields; the tier itself comes from the rules and the forecaster.")
             st.json(sent, expanded=False)
 
+        with st.form(f"decide-{split}-{ev}"):
+            st.markdown("**Analyst decision** (the system recommends; you decide and sign)")
+            analyst = st.text_input("Analyst", key="analyst")
+            choice = st.radio("Decision", CHOICES, index=1, horizontal=True)
+            note = st.text_input("Note")
+            if st.form_submit_button("Sign decision"):
+                if problem := decision_problem(analyst, choice, note, e):
+                    st.error(problem)
+                else:
+                    record_decision({"at_utc": pd.Timestamp.now(tz="UTC").isoformat(), "split": split,
+                                     "event_id": ev, "analyst": analyst.strip(), "decision": choice,
+                                     "note": note.strip(), "tier_final": e.tier_final, "p_critical": e.p_critical,
+                                     "forecast_source": e.forecast_source})
+                    st.rerun()
+        signed = decisions[(decisions.split == split) & (decisions.event_id == ev)]
+        if len(signed):
+            st.caption("Decision log for this event (what the system showed when each was signed):")
+            st.dataframe(signed.drop(columns=["split", "event_id"]), hide_index=True, width="stretch")
+
         a, b = st.columns(2)
         risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Risk per CDM update")
         tier_bands(risk, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
@@ -323,10 +375,11 @@ with fleet_tab:
     hist.add_annotation(x=RISK_FLOOR, y=0, yanchor="bottom", text="floor: Pc ≈ 0", showarrow=False)
     right.plotly_chart(hist, width="stretch")
 
-    st.subheader("Space-weather stress test")
+    st.subheader("Space-weather sensitivity")
     flips = shown[shown.storm_flips.astype(bool)]
     st.caption(f"{len(flips):,} of {len(shown):,} events change tier if F10 / AP rise to geomagnetic-storm levels "
-               "(denser upper atmosphere, more drag uncertainty). Check these first when a storm is forecast.")
+               "(denser upper atmosphere, more drag uncertainty). A sensitivity check, not a storm forecast: "
+               "these are the events to re-check if a storm arrives.")
     if len(flips):
         st.dataframe(flips.assign(jump=flips.p_critical_storm - flips.p_critical)
                      .sort_values("jump", ascending=False)

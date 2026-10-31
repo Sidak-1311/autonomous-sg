@@ -180,6 +180,49 @@ def test_brief_failure_is_shown_not_hidden(tmp_path, monkeypatch):
     assert any(e.value.startswith("Brief unavailable") and "offline" in e.value for e in at.error)
 
 
+def sign(at: AppTest, analyst: str, decision: str, note: str = "") -> AppTest:
+    by_label(at.text_input, "Analyst").input(analyst)
+    by_label(at.radio, "Decision").set_value(decision)
+    by_label(at.text_input, "Note").input(note)
+    by_label(at.button, "Sign decision").click().run()
+    assert not at.exception, at.exception
+    return at
+
+
+def test_signed_decision_is_logged_with_what_the_system_showed(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    assert at.metric[5].value == "4"  # queued: 0, 3, 1 (non-SAFE) and 4 (needs review)
+    sign(at, "  Ada  ", "Maneuver", "burn planned")  # event 0, the worst, is selected by default
+    log = pd.read_csv(tmp_path / "decisions.csv")
+    assert log[["split", "event_id", "analyst", "decision", "note", "tier_final", "forecast_source"]].iloc[0].tolist() \
+        == ["test", 0, "Ada", "Maneuver", "burn planned", "CRITICAL", "model"]
+    assert queue(at).set_index("event_id").decision[0] == "Maneuver"
+    assert at.metric[5].value == "3"
+    at.sidebar.selectbox[0].set_value("train").run()  # decisions belong to one split
+    assert queue(at).set_index("event_id").decision[0] == ""
+
+
+def test_unsigned_decision_is_refused(tmp_path, monkeypatch):
+    at = sign(render(write_pipeline(tmp_path), monkeypatch), "   ", "Monitor")
+    assert any("every decision is signed" in e.value for e in at.error)
+    assert not (tmp_path / "decisions.csv").exists()
+
+
+def test_dismissing_a_critical_event_needs_a_reason(tmp_path, monkeypatch):
+    at = sign(render(write_pipeline(tmp_path), monkeypatch), "Ada", "Dismiss")
+    assert any("needs a note" in e.value for e in at.error)
+    assert not (tmp_path / "decisions.csv").exists()
+    sign(at, "Ada", "Dismiss", "debris catalogue error, confirmed with owner")
+    assert pd.read_csv(tmp_path / "decisions.csv").decision.tolist() == ["Dismiss"]
+
+
+def test_dismissing_a_safe_event_needs_no_reason(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    by_label(at.selectbox, "Event (worst first)").set_value(2).run()  # SAFE, enough evidence
+    sign(at, "Ada", "Dismiss")
+    assert pd.read_csv(tmp_path / "decisions.csv").event_id.tolist() == [2]
+
+
 def test_out_of_fold_train_rows_are_not_called_in_sample(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, train_in_sample=False), monkeypatch)
     at.sidebar.selectbox[0].set_value("train").run()
