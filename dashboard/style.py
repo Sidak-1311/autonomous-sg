@@ -66,11 +66,6 @@ h1 {{ font-size: clamp(3rem, 7vw, 6.5rem) !important; font-weight: 800 !importan
 [data-testid="stDataFrame"] {{ border-radius: 14px; overflow: hidden; }}
 
 /* tabs: text only, yellow underline on the active one */
-.stTabs [data-baseweb="tab-list"] {{ gap: 2rem; border-bottom: 1px solid {LINE}; }}
-.stTabs [data-baseweb="tab"] {{ font: 600 0.8rem {FONT}; letter-spacing: 0.08em; text-transform: uppercase;
-  color: {MUTED}; padding: 0.9rem 0; background: transparent; }}
-.stTabs [aria-selected="true"] {{ color: {TEXT}; }}
-.stTabs [data-baseweb="tab-highlight"] {{ background: {ACCENT}; height: 2px; }}
 
 .pill {{ display: inline-block; padding: 0.12rem 0.65rem; border-radius: 999px; font: 600 0.72rem {FONT};
   letter-spacing: 0.08em; border: 1px solid currentColor; }}
@@ -133,8 +128,6 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
   border-radius: 999px !important; }}
 [data-testid="stMultiSelectTagsContainer"] > span > span * {{ color: {TEXT} !important; fill: {TEXT} !important;
   font-weight: 600; letter-spacing: 0.04em; }}
-.stTabs [data-baseweb="tab"] p {{ font: 600 0.78rem {FONT} !important; letter-spacing: 0.08em;
-  text-transform: uppercase; }}
 .st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
 
 /* ---- styled data tables (html_table) ---- */
@@ -177,10 +170,16 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
   font: 600 0.8rem {FONT} !important; letter-spacing: 0.06em; text-transform: uppercase; }}
 .stButton button:hover, [data-testid="stFormSubmitButton"] button:hover {{ background: {ACCENT} !important; }}
 
-/* tabs become a sticky top nav */
-.stTabs [data-baseweb="tab-list"] {{ position: sticky; top: 0; z-index: 50; background: {BG};
-  padding-top: 0.4rem; margin-top: 1.8rem; }}
-.stTabs [data-baseweb="tab-panel"] {{ padding-top: 0.6rem; }}
+/* tabs become a sticky top nav (Streamlit 1.66 markup: stTabs > ... > role=tablist > stTab) */
+[data-testid="stTabs"] [role="tablist"] {{ position: sticky; top: 0; z-index: 50; background: {BG};
+  gap: 2.4rem; border-bottom: 1px solid {LINE}; padding-top: 0.5rem; margin-top: 1.8rem; }}
+[data-testid="stTab"] {{ padding: 0.95rem 0 !important; background: transparent !important; }}
+[data-testid="stTab"] p {{ font: 600 0.74rem {FONT} !important; letter-spacing: 0.1em !important;
+  text-transform: uppercase; color: {MUTED}; transition: color 0.15s ease; }}
+[data-testid="stTab"]:hover p, [data-testid="stTab"][aria-selected="true"] p {{ color: {TEXT}; }}
+[data-testid="stTab"][aria-selected="true"] {{ box-shadow: inset 0 -2px 0 {ACCENT}; }}
+[data-testid="stTabs"] [role="tablist"] > :not([role="tab"]) {{ background: transparent !important; }}
+[data-testid="stTabPanel"] {{ padding-top: 0.6rem; }}
 </style>
 """
 

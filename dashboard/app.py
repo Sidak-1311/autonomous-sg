@@ -20,7 +20,7 @@ from dashboard.sections import detail, evaluation, fleet, queue, window  # noqa:
 from dashboard.sections.common import data_dir, load, processed_dir, read_decisions, stamp  # noqa: E402
 from src.tiering import CRITICAL, SAFE, TIERS, format_miss, format_pc, format_ttca  # noqa: E402
 
-HERO_HEIGHT = 560
+HERO_HEIGHT = 480  # the scene is a flat disc (radial offsets are tiny), so taller is just empty space
 
 st.set_page_config(page_title="Triage-TCA", page_icon=":material/radar:", layout="wide")
 style.apply()
