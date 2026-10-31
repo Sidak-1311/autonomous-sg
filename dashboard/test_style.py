@@ -131,3 +131,48 @@ def test_status_pill_is_neutral_text():
     html = style.status_pill("watch")
     assert ">WATCH<" in html and "bm-status" in html
     assert not any(c in html for c in TIER_COLORS.values())
+
+
+def test_sci_typesets_powers_times_and_keeps_quantities_whole():
+    assert style.sci("7.9×10⁻³⁰") == '7.9<span class="times">×</span>10<sup class="sx">−30</sup>'
+    assert style.sci("<10⁻³⁰").endswith('10<sup class="sx">−30</sup>')     # floor form
+    assert '<span class="nw">2 d 04 h</span>' in style.sci("T−2 d 04 h")
+    assert '<span class="nw">88.8%–92.6%</span>' in style.sci("95% CI 88.8%–92.6%")
+    assert style.sci(style.sci("10⁻⁴")) == style.sci("10⁻⁴")               # idempotent
+    assert style.sci("plain 1,000 m and <b>tags</b>") == "plain 1,000 m and <b>tags</b>"
+    assert style.sci(None) == "None" and style.sci("") == ""
+
+
+def test_helpers_apply_sci():
+    assert 'class="sx"' in style.stat("7.9×10⁻³⁰", "95% bound")
+    assert 'class="sx"' in style.cell("Pc", "Pc ≥ 1.0×10⁻⁴")
+    assert 'class="sx"' in style.hero_stat("<10⁻³⁰", "Pc now")
+    import pandas as pd
+    html = style.html_table(pd.DataFrame({"pc": ["1.3×10⁻³"]}), [("pc", "Pc", "r", None)])
+    assert 'class="sx"' in html
+
+
+def test_keep_case_protects_math_and_units_in_uppercase_labels():
+    assert style.keep_case("Pc now") == '<span class="kc">Pc</span> now'
+    assert '<span class="kc">P(Critical at TCA)</span>' in style.keep_case("P(Critical at TCA)")
+    assert '<span class="kc">cm</span>' in style.keep_case("fragments ≥ 10 cm")
+    assert '<span class="kc">yr</span>' in style.keep_case("chain risk / yr")
+    assert style.keep_case("Miss now") == "Miss now"                       # ordinary words untouched
+    assert style.keep_case("Time to TCA") == "Time to TCA"
+    assert 'class="kc"' in style.label("Pc at TCA")
+    import pandas as pd
+    assert '<span class="kc">Pc</span>' in style.html_table(pd.DataFrame({"a": [1]}), [("a", "Pc now", "r", None)])
+
+
+def test_plain_round_trips_typeset_text():
+    for text in ["7.9×10⁻³⁰", "<10⁻³⁰ at TCA", "Pc ≥ 1.0×10⁻⁴, 2 d 04 h", "95% CI 88.8%–92.6%"]:
+        assert style.plain(style.sci(text)) == text
+    assert style.plain(style.label("fragments ≥ 10 cm")) == "fragments ≥ 10 cm"
+
+
+def test_sci_and_keep_case_never_touch_tag_attributes():
+    html = '<span class="why" title="q90 Pc 9.6×10⁻¹⁶ and 2 d 04 h">miss 97 m &lt; 1,000 m</span>'
+    out = style.sci(html)
+    assert 'title="q90 Pc 9.6×10⁻¹⁶ and 2 d 04 h"' in out          # attribute untouched
+    assert style.keep_case('<b title="Pc now">Pc</b>') == '<b title="Pc now"><span class="kc">Pc</span></b>'
+    assert "--n:9" in style.stat("7.9×10⁻³⁰", "95% bound")             # long values get a smaller size

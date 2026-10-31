@@ -20,6 +20,7 @@ Layout helpers (all return HTML for st.markdown(..., unsafe_allow_html=True)):
 Streamlit blocks as bento cells: wrap st.columns in st.container(key="cells-<name>"); each
 column becomes a hairline cell. Stacked cell rows join into one grid.
 """
+import re
 from html import escape
 
 import plotly.graph_objects as go
@@ -84,11 +85,21 @@ div[class*="st-key-cells"] + div[class*="st-key-cells"] {{ border-top: none; mar
 div[class*="st-key-cells"] [data-testid="stHorizontalBlock"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
   padding: 0; border: none; }}
 
-/* mono headline numbers inside cells */
+/* math typography (style.sci): real superscripts, thin-spaced ×, no wrap inside a quantity */
+sup.sx {{ font-size: 0.6em; line-height: 0; vertical-align: 0.72em; letter-spacing: 0; margin-left: 0.03em;
+  font-feature-settings: "tnum" 1; }}
+.times {{ margin: 0 0.06em; }}
+.nw {{ white-space: nowrap; }}
+.kc {{ text-transform: none; letter-spacing: 0.02em; }}
+.tx-grid > .tx-cell, div[class*="st-key-cells"] [data-testid="stColumn"], .st-key-kpis [data-testid="stColumn"] {{
+  container-type: inline-size; }}
+
+/* headline numbers inside cells: scale with the cell so they never cross its border */
 .tx-stat {{ display: flex; flex-direction: column; gap: 0.55rem; }}
-.tx-stat .v {{ font: 400 clamp(2rem, 3.4vw, 3rem) {FONT}; letter-spacing: -0.045em; line-height: 1; color: {TEXT};
+.tx-stat .v {{ font: 400 clamp(1.5rem, calc(150cqi / var(--n, 6)), 3rem) {FONT}; letter-spacing: -0.04em;
+  word-spacing: 0.1em; line-height: 1; color: {TEXT};
   white-space: nowrap; }}
-.tx-stat .c {{ font: 500 0.7rem {MONO}; letter-spacing: 0.06em; text-transform: uppercase; color: {MUTED}; }}
+.tx-stat .c {{ font: 500 0.7rem/1.45 {MONO}; letter-spacing: 0.06em; text-transform: uppercase; color: {MUTED}; }}
 .tx-stat .s {{ font-size: 0.85rem; color: {MUTED}; line-height: 1.5; }}
 
 /* numbered rows (tesser '01 Install the CLI') */
@@ -105,7 +116,7 @@ div[class*="st-key-cells"] [data-testid="stHorizontalBlock"] [data-testid="stHor
 .bm-hero {{ display: flex; flex-direction: column; gap: 0.6rem; }}
 .bm-hero .num {{ font: 500 clamp(3rem, 7vw, 6.6rem) {FONT}; letter-spacing: -0.06em; line-height: 0.88; }}
 .stat-row .bm-hero {{ gap: 0.7rem; }}
-.stat-row .bm-hero .num {{ font: 400 clamp(2.2rem, 4vw, 3.6rem) {FONT}; letter-spacing: -0.05em; white-space: nowrap;
+.stat-row .bm-hero .num {{ font: 400 clamp(1.4rem, 15cqi, 3.6rem) {FONT}; letter-spacing: -0.05em; white-space: nowrap;
   line-height: 1; }}
 
 /* surfaces: one bordered cell; expanders and metrics on hairlines */
@@ -145,7 +156,7 @@ div[class*="st-key-cells"] [data-testid="stHorizontalBlock"] [data-testid="stHor
 .st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 0 !important; flex-wrap: nowrap; border: 1px solid {LINE}; }}
 .st-key-kpis [data-testid="stColumn"] {{ min-width: 0; padding: 1.6rem 1.6rem 1.5rem; border-right: 1px solid {LINE}; }}
 .st-key-kpis [data-testid="stColumn"]:last-child {{ border-right: none; }}
-.st-key-kpis [data-testid="stMetricValue"] {{ font-size: clamp(1.8rem, 3vw, 2.9rem); line-height: 1; white-space: nowrap; }}
+.st-key-kpis [data-testid="stMetricValue"] {{ font-size: clamp(1.4rem, 17cqi, 2.9rem); line-height: 1; white-space: nowrap; }}
 .st-key-kpi-critical [data-testid="stMetricValue"], .st-key-kpi-critical [data-testid="stMetricValue"] * {{
   color: {TIER_COLORS["CRITICAL"]} !important; }}
 .st-key-kpi-elevated [data-testid="stMetricValue"], .st-key-kpi-elevated [data-testid="stMetricValue"] * {{
@@ -279,8 +290,17 @@ def pill(tier: str) -> str:
     return f'<span class="pill" style="color:{TIER_COLORS[tier]}">{tier}</span>'
 
 
+_KEEP_CASE = re.compile(r"\bPc\b|P\([^)<]*\)|σ|\b(?:cm|km|m|yr|s|h|d)\b(?![-'])")
+
+
+def keep_case(text: str) -> str:
+    """Inside an UPPERCASE label, keep math and units as written: 'Pc', 'P(Critical at TCA)', 'cm',
+    'km', 'm', 'yr', 'σ' get a span with text-transform: none (the rest still uppercases)."""
+    return _text_only(lambda t: _KEEP_CASE.sub(lambda m: f'<span class="kc">{m.group(0)}</span>', t), str(text))
+
+
 def label(text: str) -> str:
-    return f'<div class="bm-label">{text}</div>'
+    return f'<div class="bm-label">{keep_case(sci(text))}</div>'
 
 
 def section(index: str, title: str) -> str:
@@ -288,24 +308,68 @@ def section(index: str, title: str) -> str:
     return f'<div class="bm-section"><span class="idx">{index}</span><span class="ttl">{title}</span></div>'
 
 
+_SUPER = "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"
+_PLAIN = str.maketrans(_SUPER, "−0123456789")
+_POW = re.compile(f"10([{_SUPER}]+)")
+_TIME = re.compile(r"\b(\d+ d \d{2} h)\b")
+_RANGE = re.compile(r"(\d[\d.,]*%?) ?[–-] ?(\d[\d.,]*%)")
+
+
+_SPLIT = re.compile(r"(<[^>]*>)")
+
+
+def _text_only(fn, html: str) -> str:
+    """Apply fn to the text between tags only, never inside a tag or its attributes."""
+    return "".join(part if part.startswith("<") and part.endswith(">") else fn(part)
+                   for part in _SPLIT.split(html))
+
+
+def sci(text) -> str:
+    """Typeset numbers in HTML text: '10⁻³⁰' -> 10<sup>−30</sup> (a real superscript, sized and
+    raised to sit cleanly), a thin space either side of '×', and '2 d 04 h' / '88.8%–92.6%'
+    kept on one line. Leaves everything else (tags included) untouched; idempotent."""
+    s = str(text)
+    if 'class="sx"' in s:
+        return s
+
+    def fix(t: str) -> str:
+        t = _POW.sub(lambda m: f'10<sup class="sx">{m.group(1).translate(_PLAIN)}</sup>', t)
+        t = t.replace("×10<sup", '<span class="times">×</span>10<sup')
+        t = _TIME.sub(r'<span class="nw">\1</span>', t)
+        return _RANGE.sub(r'<span class="nw">\1–\2</span>', t)
+    return _text_only(fix, s)
+
+
+_UNSUP = str.maketrans("−0123456789", _SUPER)
+_SX = re.compile(r'<sup class="sx">([^<]*)</sup>')
+_TAG = re.compile(r"<[^>]+>")
+
+
+def plain(html: str) -> str:
+    """Typeset HTML back to plain text (tags dropped, superscripts back to '10⁻³⁰'): for tests and
+    tooltips that compare against format_pc / format_miss strings."""
+    return _TAG.sub("", _SX.sub(lambda m: m.group(1).translate(_UNSUP), str(html)))
+
+
 def heading(index: str, title: str, lede: str = "") -> str:
     """Section heading plus an optional one-line lede (HTML, numbers in <b>)."""
-    return section(index, title) + (f'<p class="bm-lede">{lede}</p>' if lede else "")
+    return section(index, title) + (f'<p class="bm-lede">{sci(lede)}</p>' if lede else "")
 
 
 def stat(value: str, caption: str, tier: str | None = None, sub: str = "") -> str:
     """Mono headline number over a small label, for bento cells; coloured only for tier counts."""
     color = TIER_COLORS[tier] if tier else TEXT
-    extra = f'<span class="s">{sub}</span>' if sub else ""
-    return (f'<div class="tx-stat"><span class="v" style="color:{color}">{value}</span>'
-            f'<span class="c">{escape(caption)}</span>{extra}</div>')
+    extra = f'<span class="s">{sci(sub)}</span>' if sub else ""
+    n = max(len(plain(value)), 3)   # size by length so long values ('7.9×10⁻³⁰') still fit the cell
+    return (f'<div class="tx-stat"><span class="v" style="color:{color};--n:{n}">{sci(value)}</span>'
+            f'<span class="c">{keep_case(escape(caption))}</span>{extra}</div>')
 
 
 def cell(title: str = "", body: str = "", inner: str = "") -> str:
     """One bento cell's content: light title, muted body (HTML), then any inner HTML."""
     t = f'<div class="t">{escape(title)}</div>' if title else ""
-    b = f"<p>{body}</p>" if body else ""
-    return f'<div class="tx-cell-in">{t}{b}{inner}</div>'
+    b = f"<p>{sci(body)}</p>" if body else ""
+    return f'<div class="tx-cell-in">{t}{b}{sci(inner)}</div>'
 
 
 def cells(items: list[str], cols: int | None = None) -> str:
@@ -320,7 +384,7 @@ def steps(items: list[tuple[str, str]], active: int | None = 0) -> str:
     rows = []
     for i, (title, body) in enumerate(items):
         on = i == active
-        b = f'<div class="b">{body}</div>' if body and (on or active is None) else ""
+        b = f'<div class="b">{sci(body)}</div>' if body and (on or active is None) else ""
         rows.append(f'<div class="tx-step{" on" if on else ""}"><span class="n">{i + 1:02d}</span>'
                     f'<span class="t">{escape(title)}</span>{b}</div>')
     return f'<div class="tx-steps">{"".join(rows)}</div>'
@@ -333,7 +397,7 @@ def hero_stat(value: str, caption: str, tier: str | None = None, size: str = "he
     never wraps, for rows of 3-6 numbers.
     """
     color = TIER_COLORS[tier] if tier else TEXT
-    html = (f'<div class="bm-hero"><span class="num" style="color:{color}">{value}</span>'
+    html = (f'<div class="bm-hero"><span class="num" style="color:{color}">{sci(value)}</span>'
             f'{label(caption)}</div>')
     return f'<div class="stat-row">{html}</div>' if size == "row" else html
 
@@ -378,13 +442,13 @@ def html_table(df, columns: list[tuple], max_height: int = 560, rank: bool = Fal
     columns computed from the whole row.
     """
     head = ("<th></th>" if rank else "") + "".join(
-        f'<th class="{"r" if a == "r" else ""}">{escape(h)}</th>' for _, h, a, _ in columns)
+        f'<th class="{"r" if a == "r" else ""}">{keep_case(escape(h))}</th>' for _, h, a, _ in columns)
     body = []
     for i, row in enumerate(df.itertuples(index=False), 1):
         cells = f'<td class="rank">{i:02d}</td>' if rank else ""
         for key, _, align, render in columns:
             value = getattr(row, key) if key else None
-            html = render(value, row) if render else escape("" if value is None else str(value))
+            html = sci(render(value, row) if render else escape("" if value is None else str(value)))
             cells += f'<td class="{"r" if align == "r" else ""}">{html}</td>'
         body.append(f"<tr>{cells}</tr>")
     table = (f'<div class="bm-table-wrap" style="max-height:{max_height}px"><table class="bm-table">'

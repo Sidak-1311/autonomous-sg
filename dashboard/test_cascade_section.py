@@ -1,6 +1,7 @@
 """Verification loop for the debris-cascade display (Event detail card + section 06): run `pytest dashboard -q`."""
 import pandas as pd
 
+from dashboard import style
 from dashboard.sections.cascade import pct
 from dashboard.test_app import by_label, isolated, page_text, render, write_pipeline  # noqa: F401  (autouse fixture)
 
@@ -29,7 +30,7 @@ def test_pct_keeps_small_probabilities_readable():
 
 def test_detail_card_for_a_catastrophic_event_with_neighbours(tmp_path, monkeypatch):
     text = page_text(render(with_cascade(tmp_path), monkeypatch))   # event 0 is selected first
-    assert "If this collision happened" in text and ">1,400</span>" in text and "fragments ≥ 10 cm" in text
+    assert "If this collision happened" in text and ">1,400</span>" in text and "fragments ≥ 10 cm" in style.plain(text)
     assert "catastrophic: both bodies break up (5,000 J/g)" in text
     assert "2 other missions share its ±50 km shell at 700 km" in text and "<b>1.0%</b> chance per year" in text
 

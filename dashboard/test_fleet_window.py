@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from dashboard import style  # noqa: E402
 from dashboard.sections import window  # noqa: E402
 from dashboard.test_app import by_label, render, write_pipeline  # noqa: E402,F401  (fixtures + helpers)
 from dashboard.test_app import isolated  # noqa: E402,F401  (autouse fixture: no cache or API leaks)
@@ -58,8 +59,8 @@ def test_fleet_section_renders(tmp_path, monkeypatch):
     for title in ("Fleet overview", "Where every event sits", "Tier mix by object type", "Pc above the floor",
                   "Space-weather sensitivity", "Next 24 hours", "hour by hour"):
         assert title in md
-    assert "At the 10⁻³⁰ floor: no computable Pc" in md and "bm-lede" in md and "tx-grid" in md   # count band is bento cells
-    assert "Inside 1,000 m at TCA (forecast)" in md
+    assert "At the 10⁻³⁰ floor: no computable Pc" in style.plain(md) and "bm-lede" in md and "tx-grid" in md   # count band is bento cells
+    assert "Inside 1,000 m at TCA (forecast)" in style.plain(md)
     assert "<b>40%</b> have a Pc so small" in md                # 2 of 5 events at the floor
     assert any(c.value.startswith("2 events (40%) sit at the floor") for c in at.caption)
 
