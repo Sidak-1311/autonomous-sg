@@ -93,7 +93,8 @@ def test_stub_tiers_follow_the_rules_at_the_thresholds(tmp_path, monkeypatch):
     assert list(q.index[:1]) == [0]  # worst first
     assert q.pc_diluted.to_dict() == {0: False, 1: False, 2: False, 3: False, 4: True}  # NaN sigma (1) isn't flagged
     assert any(c.value.startswith("1 of 5 events are flagged") for c in at.caption)  # event 4
-    assert any("can't be checked" in i.value for i in at.info)  # test data: no outcomes, no verdict
+    # test data: no outcomes, so no verdict, and one hint for both outcome checks instead of two boxes
+    assert page_text(at).count("need known outcomes: choose the train split") == 1
     assert any("No data/processed/metrics.json" in i.value for i in at.info)
     assert "Suggested maneuver" in page_text(at)  # event 0 is CRITICAL
 
@@ -141,7 +142,7 @@ def test_pipeline_output_with_missing_model_columns(tmp_path, monkeypatch):
     assert "pipeline output (model)" in at.sidebar.caption[0].value
     # CRITICAL by p_critical (NaN last), then ELEVATED, then SAFE event 4 because it needs review
     assert list(queue(at).event_id) == [0, 3, 1, 4]
-    assert "Alert fatigue needs known outcomes" in page_text(at)  # test split: outcomes unknown
+    assert "need known outcomes: choose the train split" in page_text(at)  # test split: outcomes unknown
     at.sidebar.selectbox[0].set_value("train").run()  # real outcomes drive the 24 h replay and the fatigue curve
     assert not at.exception, at.exception
     # Both actual Criticals (events 0 and 3) are the queue's first two rows.

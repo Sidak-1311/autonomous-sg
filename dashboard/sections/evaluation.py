@@ -3,8 +3,10 @@ visible failures (the Pc-dilution flag and the risk regressor), each measured, n
 from dashboard.sections.common import *  # noqa: F401,F403  (helpers, st, np, pd, px, go, style, brief)
 
 
-def big_card(value: str, caption: str, detail: str) -> str:
-    return (f'<div class="bm-card" style="min-height:13.5rem"><div class="bm-hero"><span class="num" style="font-size:clamp(2.6rem,4.5vw,4.6rem)">'
+def big_card(value: str, caption: str, detail: str, min_height: str = "13.5rem") -> str:
+    """min_height lines up a row whose details differ in length; pass '' to fit the content."""
+    size = f"min-height:{min_height}" if min_height else ""
+    return (f'<div class="bm-card" style="{size}"><div class="bm-hero"><span class="num" style="font-size:clamp(2.6rem,4.5vw,4.6rem)">'
             f'{value}</span>{style.label(caption)}</div><div style="color:{style.MUTED};margin-top:0.7rem;'
             f'font-size:0.9rem">{detail}</div></div>')
 
@@ -107,8 +109,7 @@ def fatigue(shown: pd.DataFrame):
     against today's ranking by the latest CDM alone."""
     known = shown[shown.tier_actual.notna()]
     if not (known.tier_actual == CRITICAL).any():
-        st.info("Alert fatigue needs known outcomes: choose the train split.")
-        return
+        return   # render() says once that the outcome-based checks need the train split
     in_sample = known.forecast_in_sample.astype(bool).any()  # the model was fit on these very events
     rankings = {"baseline: latest CDM": (known.assign(_r=known.tier_now.map(TIER_RANK))
                                          .sort_values(["_r", "risk_latest"], ascending=False), style.MUTED, "dash"),
@@ -140,9 +141,7 @@ def dilution_failure(shown: pd.DataFrame) -> str:
                "σ = d/√2 at which Pc peaks.")
     known = shown[shown.tier_actual.notna() & shown.risk_final.notna()]
     if known.empty:
-        st.info("No known outcomes for these events, so the flag can't be checked here. "
-                "Choose the train split to see whether it predicted anything.")
-        return ""
+        return ""   # render() says once that the outcome-based checks need the train split
     check = (known.assign(flag=np.where(known.pc_diluted.astype(bool), "flagged", "not flagged"),
                           critical=known.tier_actual == CRITICAL, change=known.risk_final - known.risk_latest)
              .groupby("flag").agg(events=("critical", "size"), ended_critical=("critical", "mean"),
@@ -189,13 +188,17 @@ def render(ctx):
     st.markdown(style.section("05", "Evaluation"), unsafe_allow_html=True)
     metrics = load_metrics()
     st.markdown(lede(metrics), unsafe_allow_html=True)
-    headline(metrics)
-    if test := holdout(metrics):   # the organisers' own check, so it comes first
+    if test := holdout(metrics):   # the organisers' own check: the headline, so the eye meets it first
         held_out(test, load_error_analysis(HOLDOUT_ANALYSIS), "Official holdout · the headline",
                  f"The organisers' check: 20% of train events held out by event_id (<b>{test['n']:,} events</b>, "
                  f"<b>{test['model']['n_critical']}</b> truly Critical); the model, its calibration and its alert "
                  "threshold were fit on the other 80% only.")
+        st.markdown(f'<div style="margin-top:2.2rem">{style.label("Out of fold · every usable train event")}</div>',
+                    unsafe_allow_html=True)
+    headline(metrics)
 
+    if not (ctx.shown.tier_actual.notna()).any():
+        st.caption("Alert fatigue and the Pc-dilution check need known outcomes: choose the train split.")
     st.markdown(style.label("Alert fatigue · actual Criticals caught, working the queue top-down"),
                 unsafe_allow_html=True)
     fatigue(ctx.shown)
@@ -270,7 +273,7 @@ def held_out(test: dict, ea: dict | None, title: str, lede: str):
     st.markdown(f'<div style="margin-top:2.6rem">{style.label(title)}</div>', unsafe_allow_html=True)
     base, model = test["baseline"], test["model"]
     st.markdown(f'<p class="bm-lede">{lede}</p>', unsafe_allow_html=True)
-    cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}")
+    cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}", "")
              for k, name in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision"))]
     for col, html in zip(st.columns(len(cards)), cards):
         col.markdown(html, unsafe_allow_html=True)
