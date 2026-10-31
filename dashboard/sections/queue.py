@@ -58,7 +58,7 @@ def _filter(queue):
         decisions = f[2].pills("Decision", DECISIONS, selection_mode="multi", key="queue_decision")
         objects = sorted(queue.c_object_type.dropna().unique())
         picked = f[3].pills("Object", objects, selection_mode="multi", key="queue_object",
-                            format_func=lambda o: str(o).title())
+                            format_func=lambda o: str(o).capitalize())  # sentence case, like Fleet/Detail
     out = queue
     if search.strip():
         out = out[out.event_id.astype(str).str.contains(search.strip(), regex=False)]
@@ -104,7 +104,7 @@ TABLE_COLUMNS = [
      lambda v, r: f'{format_pc(v)}<span class="sub">≤ {format_pc(r.risk_hi)} at TCA</span>'),
     ("miss_latest_m", "Miss now", "r", lambda v, r: format_miss(v)),
     ("time_to_tca", "Time to TCA", "r", lambda v, r: format_ttca(v)),
-    ("c_object_type", "Object", "l", lambda v, r: f'<span class="dim">{str(v).title()}</span>'),
+    ("c_object_type", "Object", "l", lambda v, r: f'<span class="dim">{str(v).capitalize()}</span>'),
     ("reason", "Why", "l", _why),
 ]
 
