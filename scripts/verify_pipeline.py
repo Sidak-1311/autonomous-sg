@@ -58,9 +58,24 @@ check(ev["time_to_tca"].ge(2.0).all(), "inputs only from CDMs >= 2 days before T
 for col in ["tier_now", "tier_forecast", "tier_final"]:
     check(ev[col].isin(TIERS).all(), f"{col} only SAFE/ELEVATED/CRITICAL")
 required = ["risk_latest", "miss_latest_m", "risk_forecast", "risk_forecast_q90",
-            "miss_forecast_m", "p_critical", "reason"]
+            "miss_forecast_m", "reason"]
 check(not ev[required].isna().any().any(), "no NaN in forecast/tier columns")
-check(ev["p_critical"].between(0, 1).all(), "p_critical in [0, 1]")
+withheld = ev["forecast_source"] == "withheld"
+check((withheld == ev["needs_review"]).all(), "forecast withheld exactly for needs_review events")
+check(ev.loc[withheld, "p_critical"].isna().all() and (ev.loc[withheld, "drivers"] == "").all()
+      and (ev.loc[withheld, "risk_forecast"] == ev.loc[withheld, "risk_latest"]).all(),
+      "withheld events carry no model forecast")
+check(ev.loc[~withheld, "p_critical"].between(0, 1).all(), "p_critical in [0, 1] otherwise")
+check(ev["forecast_source"].isin(["baseline", "model", "withheld"]).all(), "forecast_source values")
+if (ROOT / "models" / "conformal.json").exists():
+    check(ev["risk_lo"].notna().all() and (ev["risk_lo"] <= ev["risk_latest"]).all()
+          and (ev["risk_latest"] <= ev["risk_hi"]).all() and ev["risk_hi"].le(0).all(),
+          "risk_lo <= risk_latest <= risk_hi <= 0")
+if (ev["forecast_source"] == "model").any():
+    in_sample = ev["forecast_in_sample"]
+    check(not (in_sample & (ev["split"] == "test")).any(), "test rows never in-sample")
+    check(ev.loc[~withheld, "p_critical_storm"].ge(ev.loc[~withheld, "p_critical"] - 1e-9).mean() > 0.5,
+          "storm stress mostly raises P(crit)")
 rank = lambda s: s.map(TIER_RANK)  # noqa: E731
 check((rank(ev["tier_final"]) >= rank(ev["tier_now"])).all()
       and (rank(ev["tier_final"]) >= rank(ev["tier_forecast"])).all(),

@@ -20,7 +20,10 @@ from src.tiering import CRITICAL, TIERS, rule_fired, tier_array, worse
 
 log = logging.getLogger(__name__)
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "forecaster.joblib"
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODEL_PATH = MODELS_DIR / "forecaster.joblib"
+CONFORMAL_PATH = MODELS_DIR / "conformal.json"
+OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
 
 CDM_COLS = ["split"] + COLUMNS + ["tier"]
 EVENT_COLS = [
@@ -33,6 +36,7 @@ EVENT_COLS = [
     "risk_final", "miss_final_m", "tier_actual",
     "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
     "needs_review", "review_reason",
+    "risk_lo", "risk_hi", "forecast_in_sample", "p_critical_storm", "storm_flips",
 ]
 
 
@@ -47,15 +51,46 @@ def baseline_forecast(ev: pd.DataFrame) -> pd.DataFrame:
     }, index=ev.index)
 
 
-def model_forecast(ev: pd.DataFrame):
-    """Trained forecast plus its P(Critical) threshold, or None without a model."""
+def _load_calib() -> dict | None:
+    return json.loads(CONFORMAL_PATH.read_text()) if CONFORMAL_PATH.exists() else None
+
+
+def model_forecast(ev: pd.DataFrame, calib: dict | None):
+    """Trained forecast (+ storm stress test) and its P(Critical) threshold,
+    or None without a model.
+
+    The final model was fit on train events with a known outcome, so its
+    scores for them are in-sample. When train.py's out-of-fold predictions
+    exist they replace those rows; otherwise the rows are marked in-sample.
+    """
     if not MODEL_PATH.exists():
         return None
     import joblib
 
     from src import train
     bundle = joblib.load(MODEL_PATH)
-    return train.predict(bundle, ev), bundle.get("crit_threshold", 0.5)
+    fc = train.predict(bundle, ev)
+    fitted_on = (ev["split"] == "train") & ev["has_target"]
+    if OOF_PATH.exists() and hasattr(train, "oof_forecast"):
+        oof = pd.read_parquet(OOF_PATH)
+        fc = train.oof_forecast(fc, ev, oof)
+        fc["forecast_in_sample"] = (fitted_on & ~ev["event_id"].isin(oof["event_id"])).to_numpy()
+    else:
+        fc["forecast_in_sample"] = fitted_on.to_numpy()
+    levels = (calib or {}).get("storm_levels")
+    fc = fc.join(train.storm_stress(bundle, ev, levels))
+    return fc, bundle.get("crit_threshold", 0.5)
+
+
+def _withhold(ev: pd.DataFrame, mask: pd.Series) -> None:
+    """No forecast on thin evidence: forecast = latest state, no P(crit)."""
+    ev.loc[mask, "risk_forecast"] = ev.loc[mask, "risk_latest"]
+    ev.loc[mask, "risk_forecast_q90"] = ev.loc[mask, "risk_latest"]
+    ev.loc[mask, "miss_forecast_m"] = ev.loc[mask, "miss_latest_m"]
+    ev.loc[mask, ["p_critical", "p_critical_storm"]] = np.nan
+    ev.loc[mask, "storm_flips"] = False
+    ev.loc[mask, "drivers"] = ""
+    ev.loc[mask, "forecast_source"] = "withheld"
 
 
 def _reason(row, threshold: float) -> str:
@@ -69,6 +104,8 @@ def _reason(row, threshold: float) -> str:
             # The threshold is set low on purpose to catch 95% of Critical events
             text += f" ≥ alert threshold {threshold:.1%}, set to catch 95% of Criticals"
         text += ")"
+    if pd.notna(row.risk_hi):
+        text += f"; final Pc at most 1e{row.risk_hi:.1f} with 90% confidence"
     if abs(row.risk_slope) >= 0.1 and row.n_cdms > 1:
         direction = "up" if row.risk_slope > 0 else "down"
         text += f"; risk trending {direction} {abs(row.risk_slope):.1f} orders/day"
@@ -123,13 +160,24 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev = build_event_table(cdms)
     if ev.empty:
         return pd.DataFrame(columns=EVENT_COLS)
-    out = model_forecast(ev)
+    calib = _load_calib()
+    out = model_forecast(ev, calib)
     if out is None:
         fc, threshold, source = baseline_forecast(ev), 0.5, "baseline"
+        fc["forecast_in_sample"] = False
+        fc["p_critical_storm"], fc["storm_flips"] = np.nan, False
     else:
         (fc, threshold), source = out, "model"
     ev = ev.join(fc)
     ev["forecast_source"] = source
+    if calib is not None:
+        from src import train
+        ev = ev.join(train.risk_interval(ev, calib))
+    else:
+        ev["risk_lo"], ev["risk_hi"] = np.nan, np.nan
+
+    _add_review(ev)
+    _withhold(ev, ev["needs_review"])
 
     ev["tier_forecast"] = tier_array(ev["risk_forecast_q90"], ev["miss_forecast_m"])
     ev.loc[ev["p_critical"] >= threshold, "tier_forecast"] = CRITICAL
@@ -139,7 +187,6 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     _add_dilution(ev)
     ev.loc[ev["pc_diluted"], "reason"] += (
         "; note: covariance large for this miss distance (tracking quality low)")
-    _add_review(ev)
     review = ev["needs_review"]
     ev.loc[review, "reason"] = ("INSUFFICIENT EVIDENCE, analyst must review ("
                                 + ev.loc[review, "review_reason"] + "). "

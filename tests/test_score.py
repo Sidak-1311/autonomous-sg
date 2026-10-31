@@ -34,6 +34,8 @@ def test_single_cdm_needs_review_and_is_refused():
     assert row.needs_review and "only one CDM" in row.review_reason
     assert row.reason.startswith("INSUFFICIENT EVIDENCE")
     assert row.tier_final == "SAFE"   # rules about the present still apply
+    assert row.forecast_source == "withheld" and np.isnan(row.p_critical)
+    assert row.risk_forecast == row.risk_latest and row.drivers == ""
 
 
 def test_stale_and_missing_covariance_need_review():
