@@ -21,7 +21,7 @@ LATEST_COLS = [
     "relative_position_r", "relative_position_t", "relative_position_n",
     "relative_velocity_r", "relative_velocity_t", "relative_velocity_n",
     "c_sigma_r", "t_sigma_r", "F10", "AP", "c_object_type",
-    "c_sigma_r_missing", "sw_missing",
+    "c_sigma_r_missing", "t_sigma_r_missing", "sw_missing",
 ]
 
 FEATURES = [

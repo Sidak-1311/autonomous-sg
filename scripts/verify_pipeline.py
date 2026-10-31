@@ -77,6 +77,12 @@ check(ev.loc[crit, "maneuver_dv_mps"].notna().all() and ev.loc[~crit, "maneuver_
 check(np.isfinite(ev.loc[crit, "maneuver_dv_mps"]).all() and ev.loc[crit, "maneuver_dv_mps"].ge(0).all(),
       "maneuver dv finite and non-negative")
 
+check(ev["needs_review"].dtype == bool and (ev["review_reason"] != "").eq(ev["needs_review"]).all(),
+      "needs_review set exactly when a review reason exists")
+check(ev.loc[ev["needs_review"], "reason"].str.startswith("INSUFFICIENT EVIDENCE").all(),
+      "refused events say so in the reason")
+check(not ev["reason"].str.contains("could reach").any(), "dilution is a note, not a warning")
+
 print("metrics.json")
 check("baseline" in metrics or not (ROOT / "src" / "metrics.py").exists(),
       "baseline metrics written once src/metrics.py exists")

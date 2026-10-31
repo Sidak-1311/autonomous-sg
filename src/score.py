@@ -32,6 +32,7 @@ EVENT_COLS = [
     "tier_now", "tier_forecast", "tier_final", "reason", "drivers", "forecast_source",
     "risk_final", "miss_final_m", "tier_actual",
     "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
+    "needs_review", "review_reason",
 ]
 
 
@@ -84,15 +85,40 @@ def _add_maneuver(ev: pd.DataFrame) -> None:
 
 
 def _add_dilution(ev: pd.DataFrame) -> None:
-    """Flag events whose Pc is low only because tracking is poor."""
+    """Flag events whose covariance is large relative to the miss distance.
+
+    On train outcomes this flag does NOT predict danger (flagged Safe events
+    never ended Critical), so it is a tracking-quality note, not a warning.
+    """
     diluted, potential = dilution(ev["risk_latest"], ev["miss_latest_m"],
                                   combined_sigma(ev["c_sigma_r"], ev["t_sigma_r"]))
     ev["pc_diluted"] = diluted
     ev["risk_potential"] = potential
 
 
+# On train outcomes the latest tier is wrong about twice as often for these
+# events (11.7% vs 6.9%), so no forecast is offered and they can't be auto-cleared.
+STALE_DAYS = 5.0
+
+
+def _add_review(ev: pd.DataFrame) -> None:
+    """Refuse to forecast when the evidence is too thin; an analyst must review."""
+    checks = [
+        (ev["n_cdms"] == 1, "only one CDM before the decision point, so no trend"),
+        (ev["time_to_tca"] > STALE_DAYS,
+         f"latest CDM is over {STALE_DAYS:.0f} days before TCA (stale)"),
+        ((ev["c_sigma_r_missing"] == 1) | (ev["t_sigma_r_missing"] == 1),
+         "covariance missing from the latest CDM"),
+    ]
+    ev["needs_review"] = np.logical_or.reduce([m.to_numpy() for m, _ in checks])
+    ev["review_reason"] = [
+        "; ".join(text for (m, text) in checks if m.iat[i]) for i in range(len(ev))]
+
+
 def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev = build_event_table(cdms)
+    if ev.empty:
+        return pd.DataFrame(columns=EVENT_COLS)
     out = model_forecast(ev)
     if out is None:
         fc, threshold, source = baseline_forecast(ev), 0.5, "baseline"
@@ -107,9 +133,13 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev["reason"] = [_reason(r) for r in ev.itertuples()]
     _add_maneuver(ev)
     _add_dilution(ev)
-    ev.loc[ev["pc_diluted"], "reason"] += [
-        f"; Pc diluted by large covariance (could reach 1e{p:.1f} with sharper tracking)"
-        for p in ev.loc[ev["pc_diluted"], "risk_potential"]]
+    ev.loc[ev["pc_diluted"], "reason"] += (
+        "; note: covariance large for this miss distance (tracking quality low)")
+    _add_review(ev)
+    review = ev["needs_review"]
+    ev.loc[review, "reason"] = ("INSUFFICIENT EVIDENCE, analyst must review ("
+                                + ev.loc[review, "review_reason"] + "). "
+                                + ev.loc[review, "reason"])
 
     # Queue order: worst tier, then highest forecast risk, then soonest TCA
     ev["_rank"] = ev["tier_final"].map({t: i for i, t in enumerate(TIERS)})
