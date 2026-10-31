@@ -176,7 +176,7 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
         "missed_critical": _summary(fn, fn_flags, FN_CAUSES, n_crit),
         "false_alarm": _summary(fp, fp_flags, FP_CAUSES, int((d["tier_final"] == CRITICAL).sum())),
         "miss_watch_tradeoff": miss_watch_tradeoff(d),
-        "missed_examples": _examples(fn, _primary(fn_flags, FN_CAUSES)),
+        "missed_examples": _examples(fn, _primary(fn_flags, FN_CAUSES), k=len(fn)),
         "false_alarm_examples": _examples(fp, _primary(fp_flags, FP_CAUSES), k=2),
     }
 
