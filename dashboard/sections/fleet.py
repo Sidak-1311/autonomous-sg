@@ -101,19 +101,34 @@ def _storm(shown: pd.DataFrame):
     ranked = (flips.assign(jump=flips.p_critical_storm - flips.p_critical,
                            miss=[format_miss(v) for v in flips.miss_latest_m])
               .sort_values("jump", ascending=False)
-              [["event_id", "tier_final", "p_critical", "p_critical_storm", "miss", "c_object_type"]])
-    cols = {"event_id": "Event", "tier_final": "Tier", "miss": "Miss now", "c_object_type": "Object",
-            # bars draw in the theme's primary (white), never the yellow accent
-            "p_critical": st.column_config.ProgressColumn("P(Critical) now", min_value=0, max_value=1,
-                                                          format="percent"),
-            "p_critical_storm": st.column_config.ProgressColumn("P(Critical) in a storm", min_value=0,
-                                                                max_value=1, format="percent")}
-    st.dataframe(ranked.head(10).style.map(tier_text, subset=["tier_final"]), hide_index=True,
-                 width="stretch", column_config=cols)
-    if len(ranked) > 10:
-        with st.expander(f"All {len(ranked):,} storm-sensitive events"):
-            st.dataframe(ranked.style.map(tier_text, subset=["tier_final"]), hide_index=True,
-                         width="stretch", column_config=cols)
+              [["event_id", "tier_final", "p_critical", "p_critical_storm", "jump", "miss", "c_object_type"]])
+    st.write("")
+    st.markdown(style.html_table(ranked, STORM_COLUMNS, max_height=480, rank=True, foot=(
+        f"<span>{len(ranked):,} events · biggest jump in P(Critical) first</span>"
+        "<span>F10 / AP at the data's 99th percentile</span>")), unsafe_allow_html=True)
+    with st.expander("Export or sort as a grid"):
+        st.dataframe(ranked.style.map(tier_text, subset=["tier_final"]), hide_index=True, width="stretch",
+                     column_config={"event_id": "Event", "tier_final": "Tier", "miss": "Miss now",
+                                    "c_object_type": "Object", "jump": None,
+                                    "p_critical": st.column_config.NumberColumn("P(Critical) now", format="percent"),
+                                    "p_critical_storm": st.column_config.NumberColumn("P(Critical) in a storm",
+                                                                                      format="percent")})
+
+
+def _jump(v, _) -> str:
+    """Change in P(Critical) in percentage points."""
+    return f'<span class="strong">+{100 * v:.1f} pts</span>' if v == v else '<span class="dim">—</span>'
+
+
+STORM_COLUMNS = [
+    ("event_id", "Event", "l", lambda v, r: f'<span class="strong">{v}</span>'),
+    ("tier_final", "Tier now", "l", lambda v, r: style.tier_pill(v)),
+    ("p_critical", "P(Critical) now", "l", lambda v, r: style.prob_bar(v)),
+    ("p_critical_storm", "P(Critical) in a storm", "l", lambda v, r: style.prob_bar(v)),
+    ("jump", "Change", "r", _jump),
+    ("miss", "Miss now", "r", None),
+    ("c_object_type", "Object", "l", lambda v, r: f'<span class="dim">{str(v).title()}</span>'),
+]
 
 
 def render(ctx):
