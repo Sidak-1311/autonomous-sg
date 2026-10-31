@@ -94,3 +94,34 @@ def test_table_bits_handle_edge_values():
     assert "width:0.0%" in style.prob_bar(-0.2)
     assert "dim" in style.tier_pill(None) and "UNKNOWN" not in style.tier_pill(None)
     assert 'class="bm-chip"' in style.chip("Storm", on=False) and "on" in style.chip("Review")
+
+
+def test_bento_helpers():
+    assert ">Fleet overview<" in style.heading("03", "Fleet overview")
+    assert 'class="bm-lede"' in style.heading("03", "Fleet", "<b>96%</b> need a look")
+    assert "bm-lede" not in style.heading("03", "Fleet")                  # no empty lede paragraph
+    grid = style.cells(["a", "b", "c"])
+    assert grid.count('class="tx-cell"') == 3 and "repeat(3," in grid
+    assert "repeat(2," in style.cells(["a", "b", "c"], cols=2)
+    assert "repeat(1," in style.cells([])                                   # empty: still valid CSS
+    assert style.cell() == '<div class="tx-cell-in"></div>'
+    assert "&lt;x&gt;" in style.cell("<x>")                                 # titles are escaped
+
+
+def test_stat_colours_only_tier_counts():
+    assert TIER_COLORS[CRITICAL] in style.stat("396", "Critical", CRITICAL)
+    plain = style.stat("2,167", "Events", sub="test split")
+    assert style.TEXT in plain and 'class="s"' in plain
+
+
+def test_steps_light_one_row_and_number_from_01():
+    html = style.steps([("Pc", "body one"), ("Miss", "body two")], active=1)
+    assert ">01<" in html and ">02<" in html and html.count("tx-step on") == 1
+    assert "body two" in html and "body one" not in html                  # only the active body shows
+    both = style.steps([("Pc", "x"), ("Miss", "y")], active=None)
+    assert "x" in both and "y" in both and "tx-step on" not in both
+    assert style.steps([]) == '<div class="tx-steps"></div>'
+
+
+def test_accent_is_not_yellow_and_not_a_tier():
+    assert style.ACCENT == "#ECF0BD" and style.BG == "#000000"
