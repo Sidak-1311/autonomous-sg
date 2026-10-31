@@ -269,3 +269,18 @@ def test_models_never_early_stop():
     # calibration fit on OOF scores doesn't apply to it
     assert train._clf().early_stopping is False
     assert train._reg(loss="absolute_error").early_stopping is False
+
+
+def test_oof_forecast_swaps_all_three_tier_probabilities():
+    # Regression: only p_critical was swapped, so train rows' three probabilities didn't sum to 1
+    import pandas as pd
+    from src import train as tr
+    ev = pd.DataFrame({"split": ["train", "test"], "event_id": [1, 1]})
+    fc = pd.DataFrame({"risk_forecast": [-5.0, -5.0], "risk_forecast_q90": [-4.0, -4.0],
+                       "miss_forecast_m": [900.0, 900.0], "p_safe": [0.1, 0.1], "p_elevated": [0.1, 0.1],
+                       "p_critical": [0.8, 0.8]})
+    oof = pd.DataFrame({"event_id": [1], "risk_forecast": [-6.0], "risk_forecast_q90": [-5.0],
+                        "miss_forecast_m": [2_000.0], "p_safe": [0.7], "p_elevated": [0.2], "p_critical": [0.1]})
+    out = tr.oof_forecast(fc, ev, oof)
+    assert list(out.loc[0, ["p_safe", "p_elevated", "p_critical"]]) == [0.7, 0.2, 0.1]
+    assert list(out.loc[1, ["p_safe", "p_elevated", "p_critical"]]) == [0.1, 0.1, 0.8]   # test row untouched

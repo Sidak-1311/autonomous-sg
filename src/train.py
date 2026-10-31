@@ -278,9 +278,11 @@ def oof_forecast(fc: pd.DataFrame, ev: pd.DataFrame, oof: pd.DataFrame) -> pd.Da
     """Swap in out-of-fold forecasts for train events the final model was fit on,
     so nothing scored on train rows is in-sample. fc and ev share an index."""
     fc = fc.copy()
-    lookup = oof.set_index("event_id")[OOF_COLS]
+    # All three tier probabilities move together, or the row no longer sums to 1
+    cols = OOF_COLS + [c for c in TIER_PROB_COLS if c in oof and c not in OOF_COLS and c in fc]
+    lookup = oof.set_index("event_id")[cols]
     rows = (ev["split"] == "train") & ev["event_id"].isin(lookup.index)
-    fc.loc[rows, OOF_COLS] = lookup.loc[ev.loc[rows, "event_id"]].to_numpy()
+    fc.loc[rows, cols] = lookup.loc[ev.loc[rows, "event_id"]].to_numpy()
     return fc
 
 

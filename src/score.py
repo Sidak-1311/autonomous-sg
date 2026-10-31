@@ -94,7 +94,8 @@ def _withhold(ev: pd.DataFrame, mask: pd.Series) -> None:
     ev.loc[mask, "risk_forecast"] = ev.loc[mask, "risk_latest"]
     ev.loc[mask, "risk_forecast_q90"] = ev.loc[mask, "risk_latest"]
     ev.loc[mask, "miss_forecast_m"] = ev.loc[mask, "miss_latest_m"]
-    ev.loc[mask, ["p_critical", "p_critical_storm"]] = np.nan
+    probs = [c for c in ("p_safe", "p_elevated", "p_critical", "p_critical_storm") if c in ev]
+    ev.loc[mask, probs] = np.nan
     ev.loc[mask, "storm_flips"] = False
     ev.loc[mask, "drivers"] = ""
     ev.loc[mask, "forecast_source"] = "withheld"

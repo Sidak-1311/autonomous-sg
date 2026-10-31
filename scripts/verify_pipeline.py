@@ -66,6 +66,10 @@ check(ev.loc[withheld, "p_critical"].isna().all() and (ev.loc[withheld, "drivers
       and (ev.loc[withheld, "risk_forecast"] == ev.loc[withheld, "risk_latest"]).all(),
       "withheld events carry no model forecast")
 check(ev.loc[~withheld, "p_critical"].between(0, 1).all(), "p_critical in [0, 1] otherwise")
+three = ev[["p_safe", "p_elevated", "p_critical"]]
+check((three.isna().all(axis=1) | ((three.sum(axis=1, min_count=3) - 1).abs() < 1e-6)).all()
+      and three.loc[withheld].isna().all().all(),
+      "tier probabilities: all three NaN (withheld / no model) or summing to 1")
 check(ev["forecast_source"].isin(["baseline", "model", "withheld"]).all(), "forecast_source values")
 if (ROOT / "models" / "conformal.json").exists():
     check(ev["risk_lo"].notna().all() and (ev["risk_lo"] <= ev["risk_latest"]).all()
