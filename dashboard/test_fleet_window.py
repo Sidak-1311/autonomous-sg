@@ -55,10 +55,11 @@ def test_fleet_section_renders(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
     assert not at.exception, at.exception
     md = " ".join(m.value for m in at.markdown)
-    for title in ("Fleet overview", "Where every event sits", "Tier mix by object", "Pc above the floor",
-                  "Space-weather sensitivity", "Next 24 hours"):
+    for title in ("Fleet overview", "Where every event sits", "Tier mix by object type", "Pc above the floor",
+                  "Space-weather sensitivity", "Next 24 hours", "hour by hour"):
         assert title in md
-    assert "Events in view" in md and "Pc at the floor" in md
+    assert "Events in view" in md and "bm-lede" in md
+    assert "<b>40%</b> have a Pc so small" in md                # 2 of 5 events at the floor
     assert any(c.value.startswith("2 events (40%) sit at the floor") for c in at.caption)
 
 

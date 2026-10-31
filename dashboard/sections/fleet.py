@@ -36,17 +36,15 @@ def _bands(fig):
         fig.add_vrect(x0=lo, x1=hi, fillcolor=TIER_COLORS[t], opacity=BAND_OPACITY, line_width=0, layer="below")
 
 
-def _headline(shown: pd.DataFrame, floor: pd.Series):
-    """Giant counts: all events, then one per tier (coloured), then the share at the floor."""
+def _headline(shown: pd.DataFrame):
+    """Giant counts: all events, then one per tier (coloured only for the tiers)."""
     counts = shown.tier_final.value_counts()
-    cols = st.columns([1.2, 1, 1, 1, 1])
+    cols = st.columns(4, gap="large")
     with cols[0]:
         _md(stat(f"{len(shown):,}", "Events in view"))
-    for col, t in zip(cols[1:4], (CRITICAL, ELEVATED, SAFE)):
+    for col, t in zip(cols[1:], (CRITICAL, ELEVATED, SAFE)):
         with col:
             _md(stat(f"{counts.get(t, 0):,}", t.title(), t))
-    with cols[4]:
-        _md(stat(f"{floor.mean():.0%}" if len(floor) else "–", "Pc at the floor"))
 
 
 def _sky(shown: pd.DataFrame, at_tca: bool):
@@ -63,7 +61,7 @@ def _sky(shown: pd.DataFrame, at_tca: bool):
     _bands(fig)
     fig.add_annotation(x=1, xref="paper", xanchor="right", y=RISK_FLOOR, yanchor="bottom", showarrow=False,
                        text="FLOOR · Pc < 10⁻³⁰", font=dict(color=style.MUTED, size=10))
-    style.miss_axis(style.pc_axis(fig)).update_layout(height=560, **CHART)
+    style.miss_axis(style.pc_axis(fig)).update_layout(height=420, **CHART)
     lo_m = min(MISS_RANGE_M[0], float(shown[x].min())) if len(shown) else MISS_RANGE_M[0]
     hi_m = max(MISS_RANGE_M[1], float(shown[x].max())) if len(shown) else MISS_RANGE_M[1]
     fig.update_xaxes(range=[np.log10(max(lo_m, 1.0)), np.log10(hi_m)])
@@ -77,7 +75,7 @@ def _mix(shown: pd.DataFrame):
                  color_discrete_map=TIER_COLORS, category_orders={"tier_final": TIERS, "c_object_type": order},
                  labels={"c_object_type": "", "tier_final": "tier"})
     fig.update_traces(marker_line_width=0)
-    fig.update_layout(barnorm="percent", height=300, xaxis_title="Share of events (%)", bargap=0.35, **CHART)
+    fig.update_layout(barnorm="percent", height=340, xaxis_title="Share of events (%)", bargap=0.35, **CHART)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -89,14 +87,14 @@ def _pc_histogram(shown: pd.DataFrame, y: str, floor: pd.Series):
         fig.add_vline(x=v, line_dash="dot", line_color=style.MUTED, line_width=1)
     lo = int(np.floor(above[y].min())) if len(above) else int(RISK_FLOOR)
     fig.update_traces(marker_line_width=0)
-    style.pc_axis(fig, "x", lo=lo - lo % 4, step=4).update_layout(height=300, yaxis_title="Events", bargap=0.08,
+    style.pc_axis(fig, "x", lo=lo - lo % 4, step=4).update_layout(height=340, yaxis_title="Events", bargap=0.08,
                                                                   **CHART)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _storm(shown: pd.DataFrame):
     flips = shown[shown.storm_flips.astype(bool)]
-    _md(style.section("03.4", "Space-weather sensitivity"))
+    _md(style.label("Space-weather sensitivity"))
     left, right = st.columns([1, 2.4], gap="large")
     with left:
         _md(stat(f"{len(flips):,}", "Events that flip to Critical", CRITICAL if len(flips) else None))
@@ -111,9 +109,11 @@ def _storm(shown: pd.DataFrame):
               .sort_values("jump", ascending=False)
               [["event_id", "tier_final", "p_critical", "p_critical_storm", "miss", "c_object_type"]])
     cols = {"event_id": "Event", "tier_final": "Tier", "miss": "Miss now", "c_object_type": "Object",
-            # plain numbers: progress bars would draw data in the accent colour
-            "p_critical": st.column_config.NumberColumn("P(Critical) now", format="percent"),
-            "p_critical_storm": st.column_config.NumberColumn("P(Critical) in a storm", format="percent")}
+            # bars draw in the theme's primary (white), never the yellow accent
+            "p_critical": st.column_config.ProgressColumn("P(Critical) now", min_value=0, max_value=1,
+                                                          format="percent"),
+            "p_critical_storm": st.column_config.ProgressColumn("P(Critical) in a storm", min_value=0,
+                                                                max_value=1, format="percent")}
     st.dataframe(ranked.head(10).style.map(tier_text, subset=["tier_final"]), hide_index=True,
                  width="stretch", column_config=cols)
     if len(ranked) > 10:
@@ -130,9 +130,13 @@ def render(ctx):
                                   default="Forecast at TCA") != "Latest CDM"
     y = "risk_forecast" if at_tca else "risk_latest"
     floor = shown[y] <= RISK_FLOOR
-    _headline(shown, floor)
+    crit_share = (shown.tier_final == CRITICAL).mean() if len(shown) else 0
+    _md(f'<p class="bm-lede"><b>{crit_share:.0%}</b> of events need a maneuver; '
+        f'<b>{floor.mean() if len(floor) else 0:.0%}</b> have a Pc so small it sits at the 10⁻³⁰ floor.</p>')
+    _headline(shown)
 
-    _md(style.section("03.1", "Where every event sits"))
+    st.write("")
+    _md(style.label("Where every event sits · Pc against miss distance"))
     _sky(shown, at_tca)
     st.caption(f"Shaded bands are the tier rules: Critical at Pc ≥ {format_pc(RISK_CRITICAL)} or miss < "
                f"{format_miss(MISS_CRITICAL_M)}, Elevated at Pc ≥ {format_pc(RISK_ELEVATED)} or miss ≤ "
@@ -140,10 +144,10 @@ def render(ctx):
 
     left, right = st.columns(2, gap="large")
     with left:
-        _md(style.section("03.2", "Tier mix by object"))
+        _md(style.label("Tier mix by object type"))
         _mix(shown)
     with right:
-        _md(style.section("03.3", "Pc above the floor"))
+        _md(style.label("Pc above the floor"))
         _pc_histogram(shown, y, floor)
         st.caption(f"{int(floor.sum()):,} events ({floor.mean() if len(floor) else 0:.0%}) sit at the floor, "
                    "Pc < 10⁻³⁰, and are left out so the rest stays readable.")

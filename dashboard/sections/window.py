@@ -64,8 +64,10 @@ def render(ctx):
     start = controls[0].slider("Window starts (days after the decision point)", lo, lo + 5, lo, 0.25)
     now = controls[1].slider("Now (hours into the window)", 0, 24, 24)
     win, inside, near, crit = _hourly(shown, start)
+    _md(f'<p class="bm-lede"><b>{len(win):,}</b> encounters reach closest approach in this 24-hour window; '
+        f'<b>{int(inside.sum()):,}</b> come inside 1 km.</p>')
 
-    stats = st.columns(3)
+    stats = st.columns(3, gap="large")
     for col, value, caption, tier, to_come in (
             (stats[0], int(inside[:now].sum()), "Inside 1 km so far", CRITICAL, int(inside[now:].sum())),
             (stats[1], int(near[:now].sum()), "1–5 km so far", ELEVATED, int(near[now:].sum())),
@@ -75,6 +77,8 @@ def render(ctx):
             if to_come is not None:
                 _md(style.label(f"+{to_come:,} still to come"))
 
+    st.write("")
+    _md(style.label("Objects reaching closest approach, hour by hour"))
     st.plotly_chart(_chart(inside, near, crit, now, start), width="stretch", config={"displayModeBar": False})
     st.caption(f"Miss distance at TCA: {int(win.real.sum()):,} measured, {int((~win.real).sum()):,} predicted "
                "by the forecaster (outcome unknown). Faded hours are still to come.")
