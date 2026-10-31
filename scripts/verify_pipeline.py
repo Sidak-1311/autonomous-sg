@@ -99,6 +99,10 @@ check(ev.loc[ev["needs_review"], "reason"].str.startswith("INSUFFICIENT EVIDENCE
 check(not ev["reason"].str.contains("could reach").any(), "dilution is a note, not a warning")
 
 print("metrics.json")
+if "queue_depth" in metrics:
+    qd = metrics["queue_depth"]
+    check(qd["model"] is not None and qd["ci95"]["reduction"][0] <= qd["reduction"] <= qd["ci95"]["reduction"][1],
+          f"queue depth model {qd['model']} vs baseline {qd['baseline']}, CI contains the estimate")
 check("baseline" in metrics or not (ROOT / "src" / "metrics.py").exists(),
       "baseline metrics written once src/metrics.py exists")
 

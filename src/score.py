@@ -219,7 +219,22 @@ def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:
     if cv_path.exists():
         # Model scores on train would be in-sample; report out-of-fold CV instead
         results["model"] = json.loads(cv_path.read_text())
+    if not known["forecast_in_sample"].any():
+        results["queue_depth"] = _queue_depth(known)
     return results
+
+
+def _queue_depth(known: pd.DataFrame) -> dict:
+    """Reviews needed to catch 95% of Criticals: the queue order (ev is already
+    sorted) vs today's order (latest tier, then latest Pc, then soonest TCA)."""
+    from src.metrics import queue_depth
+    rank_model = np.arange(len(known))
+    base = known.assign(_r=known["tier_now"].map({t: i for i, t in enumerate(TIERS)}),
+                        _pos=rank_model)
+    base = base.sort_values(["_r", "risk_latest", "time_to_tca"], ascending=[False, False, True])
+    rank_base = np.empty(len(known), int)
+    rank_base[base["_pos"].to_numpy()] = np.arange(len(known))
+    return queue_depth((known["tier_actual"] == CRITICAL).to_numpy(), rank_model, rank_base)
 
 
 def main():

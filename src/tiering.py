@@ -8,7 +8,11 @@ import numpy as np
 SAFE, ELEVATED, CRITICAL = "SAFE", "ELEVATED", "CRITICAL"
 TIERS = [SAFE, ELEVATED, CRITICAL]  # ordered by severity
 TIER_RANK = {t: i for i, t in enumerate(TIERS)}
-TIER_COLORS = {SAFE: "#2e9e5b", ELEVATED: "#e8a33d", CRITICAL: "#d64545"}
+# Tuned for the dashboard's near-black background (#05070D): each has >= 5.3:1
+# contrast, and Safe is a recessive steel blue (not green), so the worst tier
+# pair keeps CIELAB dE >= 36 under deuteranopia and protanopia (Machado 2009).
+# Never show a tier by colour alone: always with its text label.
+TIER_COLORS = {SAFE: "#4A86C5", ELEVATED: "#F5C04E", CRITICAL: "#F2386F"}
 
 RISK_CRITICAL = -4.0   # Pc >= 1e-4
 RISK_ELEVATED = -6.0   # Pc >= 1e-6

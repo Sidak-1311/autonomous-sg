@@ -69,8 +69,8 @@ CSV ──► ingest ──► features ──► rules ────────
 | `src/features.py` | One row per event from CDMs with `time_to_tca ≥ 2` d: latest state, risk/miss trends, sigma shrink, geometry, physics Pc prior; targets from the last CDM |
 | `src/physics.py` | Short-encounter Pc approximation, maneuver sizing, covariance-dilution check |
 | `src/tiering.py` | Tier rules, reason text |
-| `src/train.py` | scikit-learn HistGradientBoosting, 5-fold GroupKFold on `event_id`; P(Critical) classifier with its threshold set for 95% recall; risk and miss regressors that must beat the latest-value baseline or fall back to it; conformal interval; storm stress test |
-| `src/metrics.py` | Critical recall/precision, F2, MSE on high-risk events, ESA loss, bootstrap 95% CIs |
+| `src/train.py` | scikit-learn HistGradientBoosting, 5-fold GroupKFold on `event_id`; P(Critical) classifier, isotonic-calibrated on out-of-fold scores, threshold set for 95% recall; risk and miss regressors that must beat the latest-value baseline or fall back to it; split-conformal interval; storm stress test |
+| `src/metrics.py` | Critical recall/precision, F2, MSE on high-risk events, ESA loss, queue depth at 95% recall; bootstrap 95% CIs |
 | `src/score.py` | Applies all of the above, writes `events_scored.parquet` / `cdms.parquet` / `metrics.json` |
 | `dashboard/app.py` | Streamlit + Plotly: operations queue, event detail (risk/miss history, 3D encounter geometry), fleet overview, 24-hour danger-zone replay, evaluation |
 
@@ -83,12 +83,17 @@ so nothing shown on train events was predicted by a model that saw them.
 |---|---|---|---|
 | Critical recall | 0.820 [0.79, 0.85] | **0.951** [0.93, 0.97] | catches 13 points more Criticals |
 | Critical precision | 0.800 [0.77, 0.83] | 0.488 [0.46, 0.52] | price: about 2x the Critical list |
-| Queue depth to catch 95% of Criticals | 1,514 events (18.3%) | **1,198 events (14.4%)** | 21% fewer reviews |
+| Queue depth to catch 95% of Criticals | 1,514 [1,362, 1,798] (18.3%) | **1,198 [999, 1,456] (14.4%)** | 21% fewer reviews [6%, 37%] |
+| P(Critical) Brier score | 0.062 (climatology) | **0.019** (0.022 before calibration) | P(crit) is a calibrated probability |
 | F2 / MSE on high-risk / ESA loss | 0.411 / 8.01 / 19.5 | same | risk forecast falls back to baseline (below) |
 
-Brackets are bootstrap 95% CIs. Queue depth is measured in the dashboard's queue order
-(tier, then P(crit), then forecast risk) on out-of-fold train rows; the baseline orders by
-latest tier, then latest risk. Never quote the 6% figure from an earlier in-sample run. On `test_data.csv` the outcomes are hidden (data stop at
+Brackets are bootstrap 95% CIs (queue depth: paired bootstrap over events, so the
+reduction interval is wide; quote it with the interval). Queue depth is measured in the
+dashboard's queue order (tier, then P(crit), then forecast risk) on out-of-fold train rows;
+the baseline orders by latest tier, then latest Pc, then soonest TCA. Never quote the 6%
+figure from an earlier in-sample run. The 90% conformal interval on Pc at TCA covers 90.2%
+of out-of-fold outcomes; because it is equal-tailed, its top is shown as a **one-sided 95%
+upper bound** and the uninformative lower end is not displayed. On `test_data.csv` the outcomes are hidden (data stop at
 the 2-day cutoff), so test events are scored but not evaluated: 394 Critical, 307
 Elevated, 1,466 Safe of 2,167, with 91 refused for insufficient evidence.
 
@@ -106,8 +111,9 @@ Elevated, 1,466 Safe of 2,167, with 91 refused for insufficient evidence.
   279 flagged Safe events ended Critical, and flagged events overall ended Critical less
   often than unflagged ones (1.9% vs 6.8%), because tracking improves far past the Pc peak. It is shown as a tracking-quality note with this measured result,
   never as a warning.
-- **Low alert threshold.** Catching 95% of Criticals needs P(crit) ≥ 0.1%, so many events
-  are raised at a few percent. Every such reason states the threshold explicitly.
+- **Low alert threshold.** Catching 95% of Criticals needs a calibrated P(crit) ≥ 3.3%, so
+  many events are raised at single-digit probabilities. Every such reason states the
+  threshold explicitly ("P(crit) 64.2% ≥ alert threshold 3.3%, set for 95% recall").
 - **Storm sensitivity is not a storm forecast.** With F10/AP at the data's 99th percentile,
   350 test events flip to Critical; this likely reflects solar-cycle correlations in
   2015–2019 data, not drag physics. Shown as sensitivity only.
