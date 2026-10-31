@@ -73,6 +73,52 @@ def test_hidden_test_set_block(tmp_path, monkeypatch):
     assert missed.pc[1] == "<10⁻³⁰ → <10⁻³⁰" and missed.cause[1] == "no evidence after cutoff"
 
 
+def test_official_holdout_block_leads_with_the_organisers_split(tmp_path, monkeypatch):
+    conf = lambda m: {"labels": ["SAFE", "ELEVATED", "CRITICAL"], "matrix": m}  # noqa: E731
+    hm, ea = tmp_path / "holdout_metrics.json", tmp_path / "ea_holdout.json"
+    hm.write_text(json.dumps({"baseline": {**METRIC_RUN, "recall_critical": 0.877, "n_critical": 154},
+                              "model": {**METRIC_RUN, "recall_critical": 0.981, "precision_critical": 0.487,
+                                        "n_critical": 154, "ci95": {"recall_critical": [0.957, 1.0]}}}))
+    ea.write_text(json.dumps({"missed_examples": [
+        {"event_id": 1936, "cause": "miss_driven", "risk_decision": -9.0, "risk_final": -6.5,
+         "miss_decision_m": 13748.0, "miss_final_m": 657.0, "tier_issued": "SAFE"}]}))
+    monkeypatch.setattr(evaluation, "HOLDOUT_METRICS", hm)
+    monkeypatch.setattr(evaluation, "HOLDOUT_ANALYSIS", ea)
+    metrics = {"baseline": METRIC_RUN, "holdout": {"n": 2389, "note": "20% by event_id",
+               "baseline": conf([[1700, 60, 25], [40, 380, 30], [5, 14, 135]]),
+               "model": conf([[1714, 48, 23], [29, 285, 136], [2, 1, 151]])}}
+    text = page_text(render(write_pipeline(tmp_path / "data", metrics=metrics), monkeypatch))
+    assert "Official holdout" in text and "<b>2,389 events</b>, <b>154</b> truly Critical" in text
+    assert ">98.1%<" in text and "baseline 87.7% · 95% CI 95.7%–100.0%" in text
+    assert "13.7 km → 657 m" in text   # format_miss switches to km at 10 km
+    assert text.index("Official holdout") < text.index("Alert fatigue")   # the headline comes first
+
+
+def test_no_holdout_metrics_file_no_holdout_block(tmp_path, monkeypatch):
+    monkeypatch.setattr(evaluation, "HOLDOUT_METRICS", tmp_path / "absent.json")
+    metrics = {"baseline": METRIC_RUN, "holdout": {"n": 1, "baseline": {}, "model": {}}}
+    assert "Official holdout" not in page_text(render(write_pipeline(tmp_path / "d", metrics=metrics), monkeypatch))
+
+
+def test_final_tier_probability_bar(tmp_path, monkeypatch):
+    import pandas as pd
+    from dashboard.test_app import by_label
+    root = write_pipeline(tmp_path)
+    path = root / "processed" / "events_scored.parquet"
+    ev = pd.read_parquet(path)
+    ev["p_safe"], ev["p_elevated"] = 0.04, 0.06   # event 0: p_critical 0.9 in the fixture
+    ev.to_parquet(path)
+    at = render(root, monkeypatch)
+    text = page_text(at)
+    assert "Final tier at TCA" in text and "Safe</span> 4.0%" in text and "Critical</span> 90.0%" in text
+    by_label(at.selectbox, "Event (worst first)").set_value(1).run()   # needs review: no forecast, no bar
+    assert "Final tier at TCA" not in page_text(at)
+
+
+def test_no_probability_columns_no_bar(tmp_path, monkeypatch):
+    assert "Final tier at TCA" not in page_text(render(write_pipeline(tmp_path), monkeypatch))
+
+
 def test_no_lockbox_no_block(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN}), monkeypatch)
     assert "Hidden test set" not in page_text(at)

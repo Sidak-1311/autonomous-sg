@@ -190,6 +190,11 @@ def render(ctx):
     metrics = load_metrics()
     st.markdown(lede(metrics), unsafe_allow_html=True)
     headline(metrics)
+    if test := holdout(metrics):   # the organisers' own check, so it comes first
+        held_out(test, load_error_analysis(HOLDOUT_ANALYSIS), "Official holdout · the headline",
+                 f"The organisers' check: 20% of train events held out by event_id (<b>{test['n']:,} events</b>, "
+                 f"<b>{test['model']['n_critical']}</b> truly Critical); the model, its calibration and its alert "
+                 "threshold were fit on the other 80% only.")
 
     st.markdown(style.label("Alert fatigue · actual Criticals caught, working the queue top-down"),
                 unsafe_allow_html=True)
@@ -235,16 +240,36 @@ def as_grid(df: pd.DataFrame, **kw):
         st.dataframe(df, width="stretch", **kw)
 
 
+HOLDOUT_METRICS = ROOT / "models" / "holdout_metrics.json"       # 80/20 split by event_id (src.train)
+HOLDOUT_ANALYSIS = ROOT / "models" / "error_analysis_holdout.json"
+
+
+def holdout(metrics: dict | None) -> dict | None:
+    """The organisers' 80/20 held-out evaluation: scores + CIs from holdout_metrics.json, matrices from
+    metrics.json['holdout']. None unless both are there."""
+    cm = (metrics or {}).get("holdout")
+    if not cm or not HOLDOUT_METRICS.exists():
+        return None
+    hm = json.loads(HOLDOUT_METRICS.read_text())
+    return {"n": cm["n"], "baseline": {**hm["baseline"], "confusion": cm["baseline"]},
+            "model": {**hm["model"], "confusion": cm["model"]}}
+
+
 def lockbox(test: dict | None, ea: dict | None):
     """The hidden ESA Kelvins test labels: the frozen model scored once, baseline on the same 2,167 events."""
-    if not test:
-        return
-    st.markdown(f'<div style="margin-top:2.6rem">{style.label("Hidden test set · scored once")}</div>',
-                unsafe_allow_html=True)
+    if test:
+        held_out(test, ea, "Hidden test set · scored once",
+                 f"The ESA Kelvins test outcomes, published after the competition: <b>{test['n']:,} events</b>, "
+                 f"<b>{test['model']['n_critical']}</b> truly Critical. Scored once on the frozen model; never used "
+                 "to train, tune or choose.")
+
+
+def held_out(test: dict, ea: dict | None, title: str, lede: str):
+    """One held-out set: recall / precision vs the baseline on the same events, both confusion matrices, and
+    every Critical the model missed there."""
+    st.markdown(f'<div style="margin-top:2.6rem">{style.label(title)}</div>', unsafe_allow_html=True)
     base, model = test["baseline"], test["model"]
-    st.markdown(f'<p class="bm-lede">The ESA Kelvins test outcomes, published after the competition: '
-                f"<b>{test['n']:,} events</b>, <b>{model['n_critical']}</b> truly Critical. Scored once on the frozen "
-                "model; never used to train, tune or choose.</p>", unsafe_allow_html=True)
+    st.markdown(f'<p class="bm-lede">{lede}</p>', unsafe_allow_html=True)
     cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}")
              for k, name in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision"))]
     for col, html in zip(st.columns(len(cards)), cards):

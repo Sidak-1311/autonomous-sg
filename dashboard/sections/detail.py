@@ -14,6 +14,20 @@ def stat(value: str, caption: str, tier: str | None = None) -> str:
         'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);letter-spacing:-0.02em;color:', 1)
 
 
+def tier_probability_bar(e) -> str:
+    """The forecaster's final-tier probabilities (p_safe + p_elevated + p_critical = 1) as one stacked bar, each
+    segment labelled in words. Empty when the columns are missing or not filled (older output, refusals)."""
+    keys = [("p_safe", SAFE), ("p_elevated", ELEVATED), ("p_critical", CRITICAL)]
+    if not all(k in e.index and pd.notna(e[k]) for k, _ in keys):
+        return ""
+    probs = [(t, float(e[k])) for k, t in keys]
+    segs = "".join(f'<div style="width:{p * 100:.2f}%;background:{TIER_COLORS[t]}"></div>' for t, p in probs if p > 0)
+    legend = " · ".join(f'<span style="color:{TIER_COLORS[t]}">{t.title()}</span> {format_prob(p)}' for t, p in probs)
+    return (f'<div style="margin:0.4rem 0 0.9rem">{style.label("Final tier at TCA · forecast probability")}'
+            f'<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;margin:0.45rem 0 0.35rem;'
+            f'background:{style.LINE}">{segs}</div><div style="font-size:0.9rem">{legend}</div></div>')
+
+
 def reason_lines(reason: str) -> str:
     """The pipeline's one-line reason ('Critical now (…); forecast …; 95% upper bound …; Pc falling …') as short
     labelled lines, one clause each."""
@@ -71,6 +85,8 @@ def render(ctx):
              (format_pc(e.risk_hi) if forecast else "withheld", "95% bound at TCA", None)]
     for col, (value, caption, tier) in zip(st.columns([1.5, 1, 1, 1, 1, 1.2]), strip):  # the tier word is widest
         col.markdown(stat(value, caption, tier), unsafe_allow_html=True)
+    if forecast and (bar := tier_probability_bar(e)):
+        st.markdown(bar, unsafe_allow_html=True)
     st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{e.c_object_type} · '
                 f"{reason_lines(text(e.reason))}</p>", unsafe_allow_html=True)
     if text(e.drivers):
