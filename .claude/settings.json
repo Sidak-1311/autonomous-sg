@@ -1,0 +1,73 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__room__get_room_state",
+      "mcp__room__get_room_updates",
+      "mcp__room__get_conflicts",
+      "mcp__room__check_alignment",
+      "mcp__room__join_room",
+      "mcp__room__announce_work",
+      "mcp__room__update_work",
+      "mcp__room__raise_conflict"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook SessionStart claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook UserPromptSubmit claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit|mcp__room__announce_work|mcp__room__update_work",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook PreToolUse claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit|mcp__room__announce_work|mcp__room__update_work",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook PostToolUse claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook Stop claude",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

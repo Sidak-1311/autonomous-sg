@@ -1,0 +1,61 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook SessionStart codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook UserPromptSubmit codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|mcp__room__announce_work|mcp__room__update_work",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook PreToolUse codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch|mcp__room__announce_work|mcp__room__update_work",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook PostToolUse codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @punya_taluka/agentroom@0.2.1 hook Stop codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
