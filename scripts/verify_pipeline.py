@@ -98,6 +98,14 @@ check(ev.loc[ev["needs_review"], "reason"].str.startswith("INSUFFICIENT EVIDENCE
       "refused events say so in the reason")
 check(not ev["reason"].str.contains("could reach").any(), "dilution is a note, not a warning")
 
+# Sanity on the forecaster's output: a broken bundle once flagged 2,083 of 2,167 test events Critical
+if (ev["forecast_source"] == "model").any():
+    share = lambda s: (ev.loc[ev["split"] == s, "tier_final"] == CRITICAL).mean()  # noqa: E731
+    check(share("test") <= 2 * share("train"),
+          f"test Critical share {share('test'):.1%} within 2x of train {share('train'):.1%}")
+    p = ev.loc[(ev["split"] == "test") & ~withheld, "p_critical"]
+    check(p.median() < 0.05, f"median test P(Critical) {p.median():.2%} < 5%")
+
 check(ev["frag_10cm"].notna().mean() > 0.9 and ev["frag_10cm"].ge(0).all()
       and ev["chain_p1y_max"].between(0, 1).all(),
       "cascade columns present: fragments >= 0, chain probability in [0, 1]")
