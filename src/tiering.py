@@ -70,12 +70,16 @@ def format_miss(miss_m: float) -> str:
     return f"{miss_m:,.0f} m" if miss_m < 10_000 else f"{miss_m / 1000:.1f} km"
 
 
+NNBSP = " "  # narrow no-break space: '2 d 04 h' never wraps, and tight tracking can't swallow it
+
+
 def format_ttca(days: float) -> str:
-    """Time to TCA as '2 d 04 h'."""
+    """Time to TCA as '2 d 04 h' (narrow no-break spaces between number and unit)."""
     if days is None or np.isnan(days):
         return "n/a"
     hours = int(round(days * 24))
-    return f"{hours // 24} d {hours % 24:02d} h"
+    s = NNBSP
+    return f"{hours // 24}{s}d {hours % 24:02d}{s}h"
 
 
 def format_prob(p: float) -> str:

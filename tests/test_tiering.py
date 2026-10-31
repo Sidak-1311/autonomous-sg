@@ -53,7 +53,8 @@ def test_format_pc(log10, text):
 def test_other_formats():
     assert format_miss(999.4) == "999 m" and format_miss(5_000) == "5,000 m"
     assert format_miss(12_345) == "12.3 km" and format_miss(float("nan")) == "n/a"
-    assert format_ttca(2.17) == "2 d 04 h" and format_ttca(0.0) == "0 d 00 h"
+    assert format_ttca(2.17) == "2 d 04 h" and format_ttca(0.0) == "0 d 00 h"
+    assert " d" not in format_ttca(2.17)              # the unit never separates from its number
     assert format_prob(0.0005) == "<0.1%" and format_prob(0.951) == "95.1%"
     assert format_prob(0.0) == "0.0%" and format_prob(float("nan")) == "n/a"
 

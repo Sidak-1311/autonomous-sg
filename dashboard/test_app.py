@@ -238,7 +238,7 @@ def test_queue_shows_pc_and_distances_not_raw_logs(tmp_path, monkeypatch):
     assert q.risk_forecast[4] == "1.0×10⁻³"
     q_all = queue(render(write_pipeline(tmp_path / "all", review=(True,) * 5), monkeypatch)).set_index("event_id")
     assert q_all.risk_forecast[2] == "<10⁻³⁰"  # the floor reads as effectively zero, not -30
-    assert q.time_to_tca[0] == "2 d 02 h"  # 2.1 days
+    assert q.time_to_tca[0] == "2 d 02 h"  # 2.1 days (narrow no-break spaces)
 
 
 def event_charts(at: AppTest) -> list[dict]:
@@ -290,7 +290,7 @@ def test_reason_lines_split_clauses_without_markup():
 def test_event_header_strip(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
     text = page_text(at)  # event 0: CRITICAL, Pc exactly on the threshold, miss 6,000 m, 2.1 days out
-    for shown in ("CRITICAL", "1.0×10⁻⁴", "6,000 m", "2 d 02 h", "90.0%", "Time to TCA",
+    for shown in ("CRITICAL", "1.0×10⁻⁴", "6,000 m", "2 d 02 h", "90.0%", "Time to TCA",
                   "95% bound at TCA", "one-sided 95% upper bound on Pc"):
         assert shown in text, shown
     by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # needs review: no forecast numbers
