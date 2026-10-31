@@ -48,3 +48,18 @@ def test_layout_helpers():
 def test_pill_always_carries_the_tier_as_text():
     html = style.pill(CRITICAL)
     assert ">CRITICAL<" in html and TIER_COLORS[CRITICAL] in html
+
+
+def test_default_data_dir_is_the_repo_data_folder(monkeypatch):
+    # Regression: sections/common.py sits one level deeper than app.py
+    from dashboard.sections import common
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    assert common.data_dir() == Path(__file__).resolve().parent.parent / "data"
+
+
+def test_shell_helpers():
+    bar = style.top_bar([("Split", "test"), ("Events", "2,167")])
+    assert "Triage" in bar and "<b>2,167</b>" in bar
+    assert style.marquee([]) == ""
+    ticker = style.marquee(["EVT 1", "EVT 2"])
+    assert ticker.count("EVT 1") == 2  # repeated for a seamless loop

@@ -11,7 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]  # dashboard/sections/common.py -> repo root
 sys.path.insert(0, str(ROOT))
 from dashboard import brief, style  # noqa: E402
 from src.physics import LEO_MEAN_MOTION, combined_sigma, dilution  # noqa: E402
