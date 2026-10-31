@@ -242,7 +242,8 @@ def test_queue_shows_pc_and_distances_not_raw_logs(tmp_path, monkeypatch):
 
 def event_charts(at: AppTest) -> list[dict]:
     specs = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
-    return [s for s in specs if s["layout"].get("title", {}).get("text", "").endswith("per CDM update")]
+    return [s for s in specs if s["layout"].get("xaxis", {}).get("title", {}).get("text") == "days to TCA"
+            and "scene" not in s["layout"]]   # the two history charts (their titles are page labels now)
 
 
 @pytest.mark.parametrize("event", [0, 2])  # 2 is Pc-diluted: the axis setup once only ran for diluted events
@@ -254,7 +255,7 @@ def test_event_history_counts_down_to_tca(tmp_path, monkeypatch, event):
     for spec in charts:
         assert spec["layout"]["xaxis"]["autorange"] == "reversed"
         assert spec["layout"]["xaxis"]["title"]["text"] == "days to TCA"
-    pc = next(s for s in charts if s["layout"]["title"]["text"].startswith("Pc"))["layout"]["yaxis"]
+    pc = next(s for s in charts if s["layout"]["yaxis"]["title"]["text"].startswith("Collision"))["layout"]["yaxis"]
     assert all(t == "1" or t.startswith("10⁻") for t in pc["ticktext"]) and len(pc["ticktext"]) >= 4
 
 
@@ -282,10 +283,10 @@ def test_event_header_strip(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
     text = page_text(at)  # event 0: CRITICAL, Pc exactly on the threshold, miss 6,000 m, 2.1 days out
     for shown in ("CRITICAL", "1.0×10⁻⁴", "6,000 m", "2 d 02 h", "90.0%", "Time to TCA",
-                  "95% upper bound on Pc at TCA"):
+                  "95% bound at TCA", "one-sided 95% upper bound on Pc"):
         assert shown in text, shown
     by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # needs review: no forecast numbers
-    assert page_text(at).count("withheld") == 2
+    assert page_text(at).count(">withheld</span>") == 2   # the two strip numbers, not other mentions
 
 
 def test_evaluation_headline_compares_model_with_baseline(tmp_path, monkeypatch):

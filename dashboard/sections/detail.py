@@ -9,8 +9,16 @@ NO_TOOLBAR = {"displayModeBar": False}  # it sat on top of the chart titles; zoo
 
 def stat(value: str, caption: str, tier: str | None = None) -> str:
     """A header-strip number: the shared row size, a notch smaller so six fit across."""
+    # display tracking (-0.07em) swallows the spaces in '2 d 06 h' and '202 m', so loosen it here
     return style.hero_stat(value, caption, tier, size="row").replace(
-        'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);color:', 1)
+        'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);letter-spacing:-0.02em;color:', 1)
+
+
+def reason_lines(reason: str) -> str:
+    """The pipeline's one-line reason ('Critical now (…); forecast …; 95% upper bound …; Pc falling …') as short
+    labelled lines, one clause each."""
+    parts = [p.strip() for p in reason.split("; ") if p.strip()]
+    return "<br>".join(f"<b>{p[:1].upper()}</b>{p[1:]}" if i == 0 else p for i, p in enumerate(parts))
 
 
 def _signed_at(v, _) -> str:
@@ -60,11 +68,15 @@ def render(ctx):
              (format_pc(e.risk_latest), "Pc now", None),
              (format_prob(e.p_critical) if forecast else "withheld", "P(Critical at TCA)", None),
              (format_miss(e.miss_latest_m), "Miss now", None),
-             (format_pc(e.risk_hi) if forecast else "withheld", "95% upper bound on Pc at TCA", None)]
+             (format_pc(e.risk_hi) if forecast else "withheld", "95% bound at TCA", None)]
     for col, (value, caption, tier) in zip(st.columns([1.5, 1, 1, 1, 1, 1.2]), strip):  # the tier word is widest
         col.markdown(stat(value, caption, tier), unsafe_allow_html=True)
-    st.markdown(f'<p class="bm-lede" style="max-width:none"><b>{e.c_object_type}</b> · {text(e.reason)}'
-                + (f"<br>Drivers: {text(e.drivers)}" if text(e.drivers) else "") + "</p>", unsafe_allow_html=True)
+    st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{e.c_object_type} · '
+                f"{reason_lines(text(e.reason))}</p>", unsafe_allow_html=True)
+    if text(e.drivers):
+        st.markdown(f'{style.label("Drivers")}<p style="margin-top:0.2rem">{text(e.drivers)}</p>',
+                    unsafe_allow_html=True)
+    st.caption("95% bound at TCA: one-sided 95% upper bound on Pc at closest approach (conformal).")
 
     main, side = st.columns([2, 1], gap="large")
     with side:
@@ -125,10 +137,9 @@ def render(ctx):
             st.json(sent, expanded=False)
 
     with main:
-        risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Pc per CDM update")
+        risk = px.line(path, x="time_to_tca", y="risk", markers=True)
         tier_bands(risk, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
-        miss = style.miss_axis(px.line(path, x="time_to_tca", y="miss_distance", markers=True,
-                                       title="Miss distance per CDM update"), "y")
+        miss = style.miss_axis(px.line(path, x="time_to_tca", y="miss_distance", markers=True), "y")
         tier_bands(miss, "y", (1, MISS_CRITICAL_M), (MISS_CRITICAL_M, MISS_ELEVATED_M))
         for fig in (risk, miss):
             fig.update_traces(line=dict(color=style.TEXT, width=1.5), marker=dict(size=5, color=style.TEXT))
@@ -147,7 +158,7 @@ def render(ctx):
             fig.add_vline(x=DECISION_DAYS, line_dash="dot", line_color=style.MUTED, annotation_text="decision point",
                           annotation_font_color=style.MUTED)
             fig.update_xaxes(autorange="reversed", title="days to TCA")
-            fig.update_layout(height=360, legend=dict(y=-0.28, yanchor="top"))  # below, clear of the title
+            fig.update_layout(height=340, legend=dict(y=-0.28, yanchor="top"), margin=dict(t=10))
         if e.pc_diluted:
             risk.add_trace(go.Scatter(x=[e.time_to_tca] * 2, y=[e.risk_latest, e.risk_potential], mode="lines+markers",
                                       line=dict(dash="dot", color=style.MUTED),
@@ -156,7 +167,9 @@ def render(ctx):
         lo = int(np.floor(np.nanmin(shown_pc))) if len(path) else int(RISK_FLOOR)
         style.pc_axis(risk, lo=lo, step=max(1, int(np.ceil(-lo / 8))))  # ~8 ticks, whatever the range
         a, b = st.columns(2)
+        a.markdown(style.label("Pc per CDM update"), unsafe_allow_html=True)
         a.plotly_chart(risk, width="stretch", config=NO_TOOLBAR)
+        b.markdown(style.label("Miss distance per CDM update"), unsafe_allow_html=True)
         b.plotly_chart(miss, width="stretch", config=NO_TOOLBAR)
 
         st.markdown(style.label("Encounter geometry · predicted miss vector per CDM, 1 km and 5 km spheres"),
@@ -170,8 +183,8 @@ def render(ctx):
             go.Scatter3d(x=[0], y=[0], z=[0], mode="markers", marker=dict(size=5, color=style.TEXT), name="satellite"),
         ])
         geo.data[0].opacity, geo.data[1].opacity = 0.18, 0.05  # the 5 km shell is context, not the subject
-        axis = dict(backgroundcolor="rgba(0,0,0,0)", gridcolor=style.LINE, color=style.MUTED)
+        axis = dict(backgroundcolor="rgba(0,0,0,0)", gridcolor=style.LINE, color=style.MUTED, tickformat=",")
         geo.update_layout(scene=dict(xaxis=dict(title="t (m)", **axis), yaxis=dict(title="n (m)", **axis),
                                      zaxis=dict(title="r (m)", **axis), aspectmode="data"),
-                          height=520, legend=dict(orientation="h", y=0))
+                          height=440, margin=dict(l=0, r=0, t=0, b=40), legend=dict(orientation="h", y=0))
         st.plotly_chart(geo, width="stretch")

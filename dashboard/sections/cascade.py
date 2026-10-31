@@ -28,8 +28,8 @@ def cascade_card(e: pd.Series) -> str:
         chain = f"No other mission in this dataset shares its ±50 km shell at {e.shell_alt_km:,.0f} km."
     return (f'<div class="bm-card" style="margin-bottom:0.8rem">{style.label("If this collision happened")}'
             f'<div style="margin-top:0.45rem;line-height:1.45"><span style="font:800 2rem {style.FONT};'
-            f'letter-spacing:-0.05em">{e.frag_10cm:,.0f} fragments</span> of 10 cm or more<br>'
-            f"{kind} ({e.energy_j_per_g:,.0f} J/g). {chain}</div></div>")
+            f'letter-spacing:-0.05em">{e.frag_10cm:,.0f}</span>{style.label("fragments ≥ 10 cm")}'
+            f'<div style="margin-top:0.5rem">{kind} ({e.energy_j_per_g:,.0f} J/g). {chain}</div></div></div>')
 
 
 def render(ctx):
@@ -65,6 +65,7 @@ def render(ctx):
     lo = int(np.floor(ev.risk_forecast[~floor].min())) if (~floor).any() else int(RISK_FLOOR)
     style.pc_axis(fig, "x", lo=lo - lo % 5, step=5).update_layout(height=420, yaxis_title="fragments ≥ 10 cm (log)",
                                                                   legend_title_text="")
+    fig.update_yaxes(dtick=1, tickformat=",")   # powers of ten only, no minor 2 / 5 labels
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     st.caption(f"{int(floor.sum()):,} events with Pc < 10⁻³⁰ are left out: their expected debris is effectively zero. "
                "Top right is the danger: likely and destructive.")
@@ -74,14 +75,19 @@ def render(ctx):
     top = ev.nlargest(15, "debris_expected").assign(
         pc=lambda d: [format_pc(v) for v in d.risk_forecast], chain=lambda d: [pct(v) for v in d.chain_p1y_max],
         hit=lambda d: np.where(d.catastrophic.astype(bool), "catastrophic", "partial"))
-    st.dataframe(top[["event_id", "tier_final", "pc", "frag_10cm", "hit", "shell_missions", "chain", "debris_expected"]]
-                 .style.map(tier_text, subset=["tier_final"]),
-                 hide_index=True, width="stretch", column_config={
-                     "event_id": "event", "tier_final": "tier", "pc": "Pc at TCA", "hit": "breakup",
-                     "frag_10cm": st.column_config.NumberColumn("fragments if hit", format="%,.0f"),
-                     "shell_missions": st.column_config.NumberColumn("missions in shell", format="%d"),
-                     "chain": "chain risk / yr",
-                     "debris_expected": st.column_config.NumberColumn("expected fragments", format="%.3g")})
+    cols = ["event_id", "tier_final", "pc", "frag_10cm", "hit", "shell_missions", "chain", "debris_expected"]
+    st.markdown(style.html_table(top[cols], [
+        ("event_id", "Event", "r", lambda v, r: f'<span class="strong">{v}</span>'),
+        ("tier_final", "Tier", "l", lambda v, r: style.pill(v)),
+        ("pc", "Pc at TCA", "r", None),
+        ("frag_10cm", "Fragments if hit", "r", lambda v, r: f"{v:,.0f}"),
+        ("hit", "Breakup", "l", None),
+        ("shell_missions", "Missions in shell", "r", lambda v, r: f"{int(v)}"),
+        ("chain", "Chain risk / yr", "r", None),
+        ("debris_expected", "Expected fragments", "r", lambda v, r: f'<span class="strong">{v:.3g}</span>')],
+        rank=True), unsafe_allow_html=True)
+    with st.expander("Export or sort as a grid"):
+        st.dataframe(top[cols], hide_index=True, width="stretch")
     with st.expander("How this is estimated, and its limits"):
         st.markdown(
             "Fragments: NASA Standard Breakup Model; a collision is catastrophic at 40 J/g or more. Masses come from "

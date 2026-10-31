@@ -28,7 +28,7 @@ def test_pct_keeps_small_probabilities_readable():
 
 def test_detail_card_for_a_catastrophic_event_with_neighbours(tmp_path, monkeypatch):
     text = page_text(render(with_cascade(tmp_path), monkeypatch))   # event 0 is selected first
-    assert "If this collision happened" in text and "1,400 fragments" in text
+    assert "If this collision happened" in text and ">1,400</span>" in text and "fragments ≥ 10 cm" in text
     assert "catastrophic: both bodies break up (5,000 J/g)" in text
     assert "2 other missions share its ±50 km shell at 700 km" in text and "<b>1%</b> chance per year" in text
 

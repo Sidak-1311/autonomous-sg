@@ -147,13 +147,13 @@ def dilution_failure(shown: pd.DataFrame) -> str:
                           critical=known.tier_actual == CRITICAL, change=known.risk_final - known.risk_latest)
              .groupby("flag").agg(events=("critical", "size"), ended_critical=("critical", "mean"),
                                   median_change=("change", "median")))
-    st.markdown(style.html_table(check.reset_index(), [
-        ("flag", "Pc-dilution flag", "l", lambda v, r: style.chip(v, on=v == "flagged")),
-        ("events", "Events", "r", lambda v, r: f"{v:,}"),
-        ("ended_critical", "Ended Critical", "r", lambda v, r: f'<span class="strong">{v:.1%}</span>'),
-        ("median_change", "Median change in log10 Pc to TCA", "r", lambda v, r: f"{v:+.1f}"),
-    ]), unsafe_allow_html=True)
-    with st.expander("Flagged vs not flagged as a grid"):
+    with st.expander("How the Pc-dilution flag was measured"):
+        st.markdown(style.html_table(check.reset_index(), [
+            ("flag", "Pc-dilution flag", "l", lambda v, r: style.chip(v, on=v == "flagged")),
+            ("events", "Events", "r", lambda v, r: f"{v:,}"),
+            ("ended_critical", "Ended Critical", "r", lambda v, r: f'<span class="strong">{v:.1%}</span>'),
+            ("median_change", "Median change in log10 Pc to TCA", "r", lambda v, r: f"{v:+.1f}"),
+        ]), unsafe_allow_html=True)
         st.dataframe(check, width="stretch", column_config={
             "ended_critical": st.column_config.NumberColumn("ended Critical", format="percent"),
             "median_change": st.column_config.NumberColumn("median change in log10 Pc to TCA", format="%.1f")})
@@ -219,11 +219,28 @@ def confusion_grid(conf: dict) -> pd.DataFrame:
                         columns=[f"predicted {t}" for t in conf["labels"]])
 
 
+def matrix_html(labels: list[str], counts: list[list[int]], cols_word: str = "Predicted") -> str:
+    """A 3x3 confusion matrix as a styled table: tier pills down the side, the diagonal (correct) in bold."""
+    df = pd.DataFrame(counts, columns=[f"c{j}" for j in range(len(labels))]).assign(actual=labels)
+    cols = [("actual", f"Actual ↓ · {cols_word} →", "l", lambda v, r: style.pill(v))]
+    for j, t in enumerate(labels):
+        cols.append((f"c{j}", t.title(), "r",
+                     lambda v, r, t=t: f'<span class="strong">{v:,}</span>' if r.actual == t else f"{v:,}"))
+    return style.html_table(df, cols)
+
+
+def as_grid(df: pd.DataFrame, **kw):
+    """The same numbers as a sortable, exportable grid, out of the way."""
+    with st.expander("Export or sort as a grid"):
+        st.dataframe(df, width="stretch", **kw)
+
+
 def lockbox(test: dict | None, ea: dict | None):
     """The hidden ESA Kelvins test labels: the frozen model scored once, baseline on the same 2,167 events."""
     if not test:
         return
-    st.markdown(style.section("05.H", "Hidden test set"), unsafe_allow_html=True)
+    st.markdown(f'<div style="margin-top:2.6rem">{style.label("Hidden test set · scored once")}</div>',
+                unsafe_allow_html=True)
     base, model = test["baseline"], test["model"]
     st.markdown(f'<p class="bm-lede">The ESA Kelvins test outcomes, published after the competition: '
                 f"<b>{test['n']:,} events</b>, <b>{model['n_critical']}</b> truly Critical. Scored once on the frozen "
@@ -235,8 +252,10 @@ def lockbox(test: dict | None, ea: dict | None):
     left, right = st.columns(2)
     for col, (who, run) in zip((left, right), (("Baseline: latest CDM", base), ("Model", model))):
         if "confusion" in run:
-            col.markdown(style.label(f"{who} · rows actual, columns predicted"), unsafe_allow_html=True)
-            col.dataframe(confusion_grid(run["confusion"]), width="stretch")
+            col.markdown(style.label(who), unsafe_allow_html=True)
+            col.markdown(matrix_html(run["confusion"]["labels"], run["confusion"]["matrix"]), unsafe_allow_html=True)
+            with col:
+                as_grid(confusion_grid(run["confusion"]))
     if ea and ea.get("missed_examples"):
         missed = pd.DataFrame(ea["missed_examples"]).assign(
             pc=lambda d: [f"{format_pc(a)} → {format_pc(b)}" for a, b in zip(d.risk_decision, d.risk_final)],
@@ -244,8 +263,13 @@ def lockbox(test: dict | None, ea: dict | None):
             cause=lambda d: d.cause.str.replace("_", " "))
         st.markdown(style.label(f"Every Critical the model missed here ({len(missed)}) · at the decision point → at TCA"),
                     unsafe_allow_html=True)
-        st.dataframe(missed[["event_id", "tier_issued", "cause", "pc", "miss"]], hide_index=True, width="stretch",
-                     column_config={"event_id": "event", "tier_issued": "tier issued", "pc": "Pc", "miss": "miss"})
+        st.markdown(style.html_table(missed, [
+            ("event_id", "Event", "r", lambda v, r: f'<span class="strong">{v}</span>'),
+            ("tier_issued", "Tier issued", "l", lambda v, r: style.pill(v)),
+            ("cause", "Cause", "l", None),
+            ("pc", "Pc", "r", None),
+            ("miss", "Miss distance", "r", None)]), unsafe_allow_html=True)
+        as_grid(missed[["event_id", "tier_issued", "cause", "pc", "miss"]], hide_index=True)
 
 
 def misses(ea: dict | None):
@@ -255,9 +279,9 @@ def misses(ea: dict | None):
     cm = ea["confusion_matrix"]
     st.markdown(f'<div style="margin-top:2rem">{style.label("Confusion matrix · rows actual final tier, columns tier issued at the decision point")}</div>',
                 unsafe_allow_html=True)
-    grid = pd.DataFrame(cm["counts"], index=[f"actual {t}" for t in cm["rows_actual_cols_issued"]],
-                        columns=[f"issued {t}" for t in cm["rows_actual_cols_issued"]])
-    st.dataframe(grid, width="stretch")
+    labels = cm["rows_actual_cols_issued"]
+    st.markdown(matrix_html(labels, cm["counts"], "Issued"), unsafe_allow_html=True)
+    as_grid(pd.DataFrame(cm["counts"], index=[f"actual {t}" for t in labels], columns=[f"issued {t}" for t in labels]))
     mc = ea["missed_critical"]
     st.caption(f"{ea['scope']}: {ea['n_critical']:,} actual Critical among {ea['n_events']:,}; recall "
                f"{ea['recall_critical']:.1%} ({ea['recall_critical_final_cdm_under_2d']:.1%} when the final CDM comes "
@@ -266,7 +290,11 @@ def misses(ea: dict | None):
     causes = pd.DataFrame([{"why": k.replace("_", " "), "missed": v["n"], "meaning": v["meaning"]}
                            for k, v in mc["by_cause"].items() if v["n"]]).sort_values("missed", ascending=False)
     st.markdown(style.label("Why the missed Critical events were missed"), unsafe_allow_html=True)
-    st.dataframe(causes, hide_index=True, width="stretch")
+    st.markdown(style.html_table(causes, [
+        ("why", "Cause", "l", lambda v, r: f'<span class="strong">{v}</span>'),
+        ("missed", "Missed", "r", lambda v, r: f"{v:,}"),
+        ("meaning", "Meaning", "l", None)]), unsafe_allow_html=True)
+    as_grid(causes, hide_index=True)
     if trade := ea.get("miss_watch_tradeoff"):
         best = trade[0]
         st.caption(f"Catching the miss-driven ones costs alerts: a watch rule for forecast miss < "
