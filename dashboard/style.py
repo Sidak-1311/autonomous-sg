@@ -147,8 +147,11 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
   padding: 0.85rem 0.9rem 0.7rem; border-bottom: 1px solid {LINE}; white-space: nowrap; }}
 .bm-table td {{ padding: 0.78rem 0.9rem; border-bottom: 1px solid rgba(255,255,255,0.045);
   white-space: nowrap; vertical-align: middle; }}
+.bm-table th, .bm-table td {{ border-left: none !important; border-right: none !important;
+  border-top: none !important; }}
+.bm-table tr {{ background: transparent !important; }}
 .bm-table tbody tr {{ transition: background 0.12s ease; }}
-.bm-table tbody tr:hover {{ background: {SURFACE}; }}
+.bm-table tbody tr:hover {{ background: {SURFACE} !important; }}
 .bm-table .r {{ text-align: right; }}
 .bm-table th.r {{ text-align: right; }}
 .bm-table .dim {{ color: {MUTED}; }}
