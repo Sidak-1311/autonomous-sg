@@ -13,8 +13,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.cascade import COLUMNS as CASCADE_OUT
+from src.cascade import cascade
 from src.features import build_event_table
-from src.ingest import COLUMNS, PROCESSED_DIR, load_all
+from src.ingest import CASCADE_COLUMNS, COLUMNS, PROCESSED_DIR, load_all
 from src.physics import combined_sigma, dilution, radial_maneuver
 from src.tiering import (CRITICAL, TIERS, format_miss, format_pc, format_prob, rule_fired,
                          tier_array, worse)
@@ -38,7 +40,7 @@ EVENT_COLS = [
     "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
     "needs_review", "review_reason",
     "risk_lo", "risk_hi", "forecast_in_sample", "p_critical_storm", "storm_flips",
-]
+] + CASCADE_COLUMNS + CASCADE_OUT
 
 
 def baseline_forecast(ev: pd.DataFrame) -> pd.DataFrame:
@@ -197,12 +199,17 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
                                 + ev.loc[review, "review_reason"] + "). "
                                 + ev.loc[review, "reason"])
 
+    # "If this collision happened": fragments and chain risk to other missions in the
+    # shell. Run on all events (both splits) so every mission is known to the shell model.
+    ev = ev.join(cascade(ev))
+
     # Queue order, same as the dashboard's: worst tier, then P(crit), then
     # forecast risk, then soonest TCA (withheld events have no P(crit): last in tier)
     ev["_rank"] = ev["tier_final"].map({t: i for i, t in enumerate(TIERS)})
     ev = ev.sort_values(["_rank", "p_critical", "risk_forecast", "time_to_tca"],
                         ascending=[False, False, False, True], na_position="last")
-    return ev[EVENT_COLS].reset_index(drop=True)
+    # reindex: cascade inputs may be absent in older extracts and test fixtures
+    return ev.reindex(columns=EVENT_COLS).reset_index(drop=True)
 
 
 def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:

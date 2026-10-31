@@ -7,7 +7,7 @@ CDM (train only; test data stops at the cutoff).
 import numpy as np
 import pandas as pd
 
-from src.ingest import OBJECT_TYPES
+from src.ingest import CASCADE_COLUMNS, OBJECT_TYPES
 from src.physics import combined_sigma, log10_pc_approx
 from src.tiering import RISK_FLOOR, tier_array
 
@@ -22,7 +22,7 @@ LATEST_COLS = [
     "relative_velocity_r", "relative_velocity_t", "relative_velocity_n",
     "c_sigma_r", "t_sigma_r", "F10", "AP", "c_object_type",
     "c_sigma_r_missing", "t_sigma_r_missing", "sw_missing",
-]
+] + CASCADE_COLUMNS
 
 FEATURES = [
     "risk_latest", "max_risk_estimate", "miss_latest_m", "log_miss", "relative_speed",
@@ -78,7 +78,8 @@ def build_event_table(cdms: pd.DataFrame, cutoff: float = CUTOFF_DAYS) -> pd.Dat
     cdms = cdms.sort_values(keys + ["time_to_tca"], ascending=[True, True, False])
     hist = cdms[cdms["time_to_tca"] >= cutoff]
 
-    latest = hist.groupby(keys).last()[LATEST_COLS]
+    # Cascade inputs are optional (older extracts and test fixtures don't carry them)
+    latest = hist.groupby(keys).last()[[c for c in LATEST_COLS if c in hist.columns]]
     latest = latest.rename(columns={"risk": "risk_latest", "miss_distance": "miss_latest_m"})
     if hist.empty:
         # groupby-apply on an empty frame returns the input columns, not ours

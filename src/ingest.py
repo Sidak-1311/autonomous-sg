@@ -24,6 +24,13 @@ COLUMNS = [
     "relative_velocity_r", "relative_velocity_t", "relative_velocity_n",
     "c_object_type", "c_sigma_r", "t_sigma_r", "F10", "AP",
 ]
+# Object size, area-to-mass and orbit, used only by the debris-cascade model (src/cascade.py).
+# Left as-is (NaN allowed): cascade() returns NaN where they are missing.
+CASCADE_COLUMNS = [
+    "mission_id", "t_span", "c_span", "t_cd_area_over_mass", "c_cd_area_over_mass", "c_rcs_estimate",
+    "t_h_per", "t_h_apo", "c_h_per", "c_h_apo",
+]
+COLUMNS = COLUMNS + CASCADE_COLUMNS
 OBJECT_TYPES = ["DEBRIS", "PAYLOAD", "ROCKET BODY", "UNKNOWN"]
 
 

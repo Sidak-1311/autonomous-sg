@@ -98,6 +98,10 @@ check(ev.loc[ev["needs_review"], "reason"].str.startswith("INSUFFICIENT EVIDENCE
       "refused events say so in the reason")
 check(not ev["reason"].str.contains("could reach").any(), "dilution is a note, not a warning")
 
+check(ev["frag_10cm"].notna().mean() > 0.9 and ev["frag_10cm"].ge(0).all()
+      and ev["chain_p1y_max"].between(0, 1).all(),
+      "cascade columns present: fragments >= 0, chain probability in [0, 1]")
+
 print("metrics.json")
 if "queue_depth" in metrics:
     qd = metrics["queue_depth"]
