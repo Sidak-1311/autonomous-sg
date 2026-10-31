@@ -32,14 +32,20 @@ def headline(metrics: dict | None):
                               f"95% CI {lo:.0%}–{hi:.0%} · top {depth['model']:,} vs {depth['baseline']:,} events, "
                               "all train events, out of fold. The interval is wide; quote it with the number."))
     base, model = metrics.get("baseline", {}), metrics.get("model")
+    # Never set two numbers side by side unless they were measured on the same events.
+    comparable = not model or base.get("n_events") == model.get("n_events")
     for key, caption in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision")):
         if key in base:
             run = model or base
             who = "model" if model else "baseline"
             cards.append(big_card(f"{run[key]:.1%}", f"{caption} · {who}",
-                                  (f"baseline {base[key]:.1%} · " if model else "") + ci_text(run, key, True)))
+                                  (f"baseline {base[key]:.1%} · " if model and comparable else "")
+                                  + ci_text(run, key, True)))
     for col, html in zip(st.columns(len(cards)) if cards else [], cards):
         col.markdown(html, unsafe_allow_html=True)
+    if not comparable:
+        st.warning(f"Not comparable yet: the baseline is scored on {base.get('n_events', 0):,} events and the model "
+                   f"on {model.get('n_events', 0):,}. No 'better or worse' verdict until both use the same events.")
     if "model" not in metrics:
         st.info("No trained model yet, so these are baseline numbers only. "
                 "The forecaster's full training run is waiting for the team's go-ahead.")
@@ -47,6 +53,8 @@ def headline(metrics: dict | None):
     run = metrics.get("model") or base
     st.write("")
     st.markdown(style.label("All metrics with 95% intervals"), unsafe_allow_html=True)
+    if not comparable:
+        table = table.drop(columns=["model better?"], errors="ignore")
     view = table.reset_index().rename(columns=VIEW_NAMES)   # html_table needs identifier column names
     st.markdown(style.html_table(view, metric_columns(view), foot=(
         f"<span>{run.get('n_critical', '?'):,} actual Critical events among {run.get('n_events', '?'):,} · "
@@ -193,3 +201,37 @@ def render(ctx):
     failures = [(t, b) for t, b in failures if b]
     for col, (title, body) in zip(st.columns(len(failures)) if failures else [], failures):
         col.markdown(failure_card(title, body), unsafe_allow_html=True)
+    misses(load_error_analysis())
+
+
+ERROR_ANALYSIS = ROOT / "models" / "error_analysis.json"   # written by `python -m src.error_analysis`
+
+
+def load_error_analysis() -> dict | None:
+    return json.loads(ERROR_ANALYSIS.read_text()) if ERROR_ANALYSIS.exists() else None
+
+
+def misses(ea: dict | None):
+    """The 3x3 confusion matrix and why the missed Critical events were missed (models/error_analysis.json)."""
+    if not ea:
+        return
+    cm = ea["confusion_matrix"]
+    st.markdown(f'<div style="margin-top:2rem">{style.label("Confusion matrix · rows actual final tier, columns tier issued at the decision point")}</div>',
+                unsafe_allow_html=True)
+    grid = pd.DataFrame(cm["counts"], index=[f"actual {t}" for t in cm["rows_actual_cols_issued"]],
+                        columns=[f"issued {t}" for t in cm["rows_actual_cols_issued"]])
+    st.dataframe(grid, width="stretch")
+    mc = ea["missed_critical"]
+    st.caption(f"{ea['scope']}: {ea['n_critical']:,} actual Critical among {ea['n_events']:,}; recall "
+               f"{ea['recall_critical']:.1%} ({ea['recall_critical_final_cdm_under_2d']:.1%} when the final CDM comes "
+               f"after the decision point). {mc['n']} missed, {ea['silent_missed_critical']} of them silently "
+               "(the rest were sent to an analyst as refusals).")
+    causes = pd.DataFrame([{"why": k.replace("_", " "), "missed": v["n"], "meaning": v["meaning"]}
+                           for k, v in mc["by_cause"].items() if v["n"]]).sort_values("missed", ascending=False)
+    st.markdown(style.label("Why the missed Critical events were missed"), unsafe_allow_html=True)
+    st.dataframe(causes, hide_index=True, width="stretch")
+    if trade := ea.get("miss_watch_tradeoff"):
+        best = trade[0]
+        st.caption(f"Catching the miss-driven ones costs alerts: a watch rule for forecast miss < "
+                   f"{best['miss_below_m']:,.0f} m recovers {best['recovered_critical']} Criticals for "
+                   f"{best['extra_alerts']} extra alerts ({best['alerts_per_recovered']:.0f} per catch).")
