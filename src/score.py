@@ -16,7 +16,8 @@ import pandas as pd
 from src.features import build_event_table
 from src.ingest import COLUMNS, PROCESSED_DIR, load_all
 from src.physics import combined_sigma, dilution, radial_maneuver
-from src.tiering import CRITICAL, TIERS, rule_fired, tier_array, worse
+from src.tiering import (CRITICAL, TIERS, format_miss, format_pc, format_prob, rule_fired,
+                         tier_array, worse)
 
 log = logging.getLogger(__name__)
 
@@ -98,17 +99,20 @@ def _reason(row, threshold: float) -> str:
     fc = row.tier_forecast.capitalize()
     text = f"{now} now ({rule_fired(row.risk_latest, row.miss_latest_m)})"
     if row.forecast_source == "model":
-        text += f"; forecast {fc} (q90 Pc 1e{row.risk_forecast_q90:.1f}, " \
-                f"miss {row.miss_forecast_m / 1000:.2f} km, P(crit) {row.p_critical:.1%}"
+        text += f"; forecast {fc} (q90 Pc {format_pc(row.risk_forecast_q90)}, " \
+                f"miss {format_miss(row.miss_forecast_m)}, P(crit) {format_prob(row.p_critical)}"
         if row.p_critical >= threshold:
             # The threshold is set low on purpose to catch 95% of Critical events
-            text += f" ≥ alert threshold {threshold:.1%}, set to catch 95% of Criticals"
+            text += f" ≥ alert threshold {format_prob(threshold)}, set for 95% recall"
         text += ")"
     if pd.notna(row.risk_hi):
-        text += f"; final Pc at most 1e{row.risk_hi:.1f} with 90% confidence"
+        # risk_hi is the top of an equal-tailed 90% split-conformal interval, so
+        # 5% of outcomes fall above it: a one-sided 95% upper bound. The lower end
+        # is uninformative (many events collapse to the -30 floor), so omit it.
+        text += f"; 95% upper bound on Pc at TCA: {format_pc(row.risk_hi)}"
     if abs(row.risk_slope) >= 0.1 and row.n_cdms > 1:
-        direction = "up" if row.risk_slope > 0 else "down"
-        text += f"; risk trending {direction} {abs(row.risk_slope):.1f} orders/day"
+        direction = "rising" if row.risk_slope > 0 else "falling"
+        text += f"; Pc {direction} {abs(row.risk_slope):.1f} orders of magnitude per day"
     return text
 
 
@@ -186,7 +190,8 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     _add_maneuver(ev)
     _add_dilution(ev)
     ev.loc[ev["pc_diluted"], "reason"] += (
-        "; note: covariance large for this miss distance (tracking quality low)")
+        "; note: combined radial σ exceeds miss/√2, so Pc is covariance-limited "
+        "(tracking-quality note, not a risk signal)")
     review = ev["needs_review"]
     ev.loc[review, "reason"] = ("INSUFFICIENT EVIDENCE, analyst must review ("
                                 + ev.loc[review, "review_reason"] + "). "

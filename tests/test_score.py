@@ -69,10 +69,17 @@ def test_dilution_note_is_not_a_warning():
     for r in rows:
         r["c_sigma_r"], r["t_sigma_r"] = 300_000.0, 300_000.0
     row = _score(rows).loc[1]
-    assert row.pc_diluted and "tracking quality low" in row.reason
+    assert row.pc_diluted and "not a risk signal" in row.reason
     assert "could reach" not in row.reason and row.tier_final == "SAFE"
 
 
 def test_queue_sorted_worst_first():
     ev = _score([_cdm(1, 3.0, -30.0, 20_000), _cdm(2, 3.0, -3.0, 500), _cdm(3, 3.0, -5.0, 9_000)])
     assert list(ev.tier_final) == ["CRITICAL", "ELEVATED", "SAFE"]
+
+
+def test_reason_uses_scientific_notation_and_metres():
+    ev = _score([_cdm(1, 4.0, -5.0, 1_500), _cdm(1, 3.0, -4.5, 1_200), _cdm(1, 2.2, -4.2, 999)])
+    reason = ev.loc[1, "reason"]
+    assert "Critical now (miss 999 m < 1,000 m)" in reason
+    assert "1e-" not in reason and "orders of magnitude per day" in reason

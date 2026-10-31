@@ -39,21 +39,62 @@ def worse(a: str, b: str) -> str:
     return a if TIER_RANK[a] >= TIER_RANK[b] else b
 
 
+# --- display formatting (shared with the dashboard) -------------------------
+
+_SUPERSCRIPT = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def format_pc(risk_log10: float) -> str:
+    """log10 Pc as '1.3×10⁻³'; the -30 floor reads '<10⁻³⁰' (effectively zero)."""
+    if risk_log10 is None or np.isnan(risk_log10):
+        return "n/a"
+    if risk_log10 <= RISK_FLOOR:
+        return "<10" + "-30".translate(_SUPERSCRIPT)
+    exp = int(np.floor(risk_log10))
+    mant = 10 ** (risk_log10 - exp)
+    if round(mant, 1) >= 10:  # 9.96 rounds up to the next decade
+        mant, exp = 1.0, exp + 1
+    return f"{mant:.1f}×10" + str(exp).translate(_SUPERSCRIPT)
+
+
+def format_miss(miss_m: float) -> str:
+    """Whole metres below 10 km, so values near the 1 km / 5 km thresholds never
+    round onto them; km with one decimal above."""
+    if miss_m is None or np.isnan(miss_m):
+        return "n/a"
+    return f"{miss_m:,.0f} m" if miss_m < 10_000 else f"{miss_m / 1000:.1f} km"
+
+
+def format_ttca(days: float) -> str:
+    """Time to TCA as '2 d 04 h'."""
+    if days is None or np.isnan(days):
+        return "n/a"
+    hours = int(round(days * 24))
+    return f"{hours // 24} d {hours % 24:02d} h"
+
+
+def format_prob(p: float) -> str:
+    if p is None or np.isnan(p):
+        return "n/a"
+    return "<0.1%" if 0 < p < 0.001 else f"{p:.1%}"
+
+
 def rule_fired(risk_log10: float, miss_m: float) -> str:
     """Short text naming which threshold put the event in its tier."""
+    pc, miss = f"Pc {format_pc(risk_log10)}", f"miss {format_miss(miss_m)}"
     t = tier(risk_log10, miss_m)
     if t == CRITICAL:
         parts = []
         if risk_log10 >= RISK_CRITICAL:
-            parts.append(f"Pc 1e{risk_log10:.1f} ≥ 1e-4")
+            parts.append(f"{pc} ≥ 1.0×10⁻⁴")
         if miss_m < MISS_CRITICAL_M:
-            parts.append(f"miss {miss_m / 1000:.2f} km < 1 km")
+            parts.append(f"{miss} < 1,000 m")
         return " and ".join(parts)
     if t == ELEVATED:
         parts = []
         if risk_log10 >= RISK_ELEVATED:
-            parts.append(f"Pc 1e{risk_log10:.1f} ≥ 1e-6")
+            parts.append(f"{pc} ≥ 1.0×10⁻⁶")
         if miss_m <= MISS_ELEVATED_M:
-            parts.append(f"miss {miss_m / 1000:.2f} km ≤ 5 km")
+            parts.append(f"{miss} ≤ 5,000 m")
         return " and ".join(parts)
-    return f"Pc 1e{risk_log10:.1f} < 1e-6 and miss {miss_m / 1000:.2f} km > 5 km"
+    return f"{pc} < 1.0×10⁻⁶ and {miss} > 5,000 m"
