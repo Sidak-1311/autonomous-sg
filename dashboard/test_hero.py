@@ -105,3 +105,15 @@ def test_camera_orbit(frames):
     eye = fig.layout.scene.camera.eye
     assert abs(eye.x) < 1e-9 and eye.y == pytest.approx(hero.CAMERA_RADIUS)
     assert len(fig.frames) == frames and bool(fig.layout.updatemenus) == (frames > 0)
+
+
+def test_hero_html_orbit_script():
+    ev = _events([dict(relative_position_t=1000.0, tier_final=CRITICAL)])
+    fig = hero.hero_figure(ev, orbit_frames=6)
+    html = hero.hero_html(fig, height=480, period_s=60, fps=10, div_id="x-hero")
+    assert html.count('id="x-hero"') == 1 and "480px" in html
+    assert "Plotly.relayout" in html and "prefers-reduced-motion" in html and "document.hidden" in html
+    assert "2 * Math.PI / (60.0 * 10)" in html
+    assert html.index("<style>") < html.index("</head>") and html.rstrip().endswith("</html>")
+    assert len(fig.frames) == 6                          # caller's figure untouched
+    assert hero.hero_html(hero.hero_figure(pd.DataFrame())).count("Plotly.relayout") == 1   # empty scene

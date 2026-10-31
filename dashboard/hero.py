@@ -17,12 +17,12 @@ from src.tiering import (CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, S
 LOG_SCALE_M = 250.0
 POS = ["relative_position_t", "relative_position_n", "relative_position_r"]
 # Quieter tiers recede so the Critical encounters read first
-STYLE = {SAFE: dict(size=2.5, opacity=0.35), ELEVATED: dict(size=3.5, opacity=0.7),
-         CRITICAL: dict(size=5.0, opacity=1.0)}
+STYLE = {SAFE: dict(size=2.0, opacity=0.45), ELEVATED: dict(size=2.6, opacity=0.75),
+         CRITICAL: dict(size=3.2, opacity=0.9)}
 UNKNOWN_COLOR = "#7a7a7a"
 N_PATHS = 40          # Critical approach paths drawn when CDMs are given
-CAMERA_RADIUS = 1.9
-CAMERA_HEIGHT = 0.6
+CAMERA_RADIUS = 1.2
+CAMERA_HEIGHT = 0.42
 
 
 def radius(d_m, scale: str = "log"):
@@ -69,7 +69,7 @@ def _wire_sphere(r: float, color: str, label: str, n: int = 48) -> list[go.Scatt
     return [
         go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", line=dict(color=color, width=1),
                      opacity=0.25, hoverinfo="skip", showlegend=False, name=label),
-        go.Scatter3d(x=[0], y=[0], z=[r * 1.08], mode="text", text=[label],
+        go.Scatter3d(x=[r * 0.72], y=[-r * 0.72], z=[r * 0.62], mode="text", text=[label],
                      textfont=dict(color=color, size=11), hoverinfo="skip", showlegend=False),
     ]
 
@@ -142,9 +142,9 @@ def hero_figure(events_df: pd.DataFrame, cdms_df: pd.DataFrame | None = None, sp
             marker=dict(size=style["size"], color=TIER_COLORS.get(t, UNKNOWN_COLOR), line=dict(width=0)),
             opacity=style["opacity"], text=[h for h, k in zip(hover, m) if k],
             hovertemplate="%{text}<extra></extra>", showlegend=False))
-    traces.append(go.Scatter3d(x=[0], y=[0], z=[0], mode="markers+text", text=["PRIMARY"],
-                               textposition="bottom center", textfont=dict(color="#ffffff", size=10),
-                               marker=dict(size=4, color="#ffffff"), hoverinfo="skip", showlegend=False))
+    traces.append(go.Scatter3d(x=[0], y=[0], z=[0], mode="markers", name="PRIMARY",
+                               marker=dict(size=6, color="#ffffff", line=dict(color="#101010", width=2)),
+                               hovertemplate="Primary satellite<extra></extra>", showlegend=False))
 
     lim = float(max(np.abs(xyz).max(initial=0.0), r_elev) * 1.05)
     hidden = dict(visible=False, range=[-lim, lim], showspikes=False)
@@ -166,3 +166,48 @@ def hero_figure(events_df: pd.DataFrame, cdms_df: pd.DataFrame | None = None, sp
                           args=[None, dict(frame=dict(duration=120, redraw=True), fromcurrent=True,
                                            transition=dict(duration=0), mode="immediate")])])])
     return fig
+
+
+ORBIT_PERIOD_S = 120.0   # one full turn; slow enough to read the points
+ORBIT_FPS = 20
+RESUME_AFTER_MS = 4000   # pause while the viewer drags or zooms, then carry on
+
+_ORBIT_JS = """
+<script>
+(function () {
+  const gd = document.getElementById("%(div_id)s");
+  if (!gd || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const eye = ((gd.layout || {}).scene || {}).camera ? gd.layout.scene.camera.eye : {x: 1, y: 1, z: 0.6};
+  const R = Math.hypot(eye.x, eye.y), Z = eye.z;
+  let a = Math.atan2(eye.y, eye.x), paused = false, timer = null;
+  const step = 2 * Math.PI / (%(period)s * %(fps)s);
+  const hold = () => { paused = true; clearTimeout(timer); timer = setTimeout(() => {
+    const e = gd.layout.scene.camera.eye; a = Math.atan2(e.y, e.x); paused = false; }, %(resume)s); };
+  ["mousedown", "wheel", "touchstart"].forEach(ev => gd.addEventListener(ev, hold, {passive: true}));
+  setInterval(() => {
+    if (paused || document.hidden) return;
+    a += step;
+    Plotly.relayout(gd, {"scene.camera.eye": {x: R * Math.cos(a), y: R * Math.sin(a), z: Z}});
+  }, 1000 / %(fps)s);
+})();
+</script>
+"""
+
+
+def hero_html(fig: go.Figure, height: int = 640, period_s: float = ORBIT_PERIOD_S, fps: int = ORBIT_FPS,
+              include_plotlyjs: str | bool = "cdn", div_id: str = "triage-hero") -> str:
+    """Standalone HTML for the scene with a slow, continuous camera orbit.
+
+    st.plotly_chart can't animate on its own, so embed this with
+    streamlit.components.v1.html(hero_html(fig), height=...). The orbit pauses
+    while the viewer interacts, stops when the tab is hidden, and is off for
+    viewers who ask their OS for reduced motion.
+    """
+    fig = go.Figure(fig)
+    fig.frames, fig.layout.updatemenus = [], []   # the script drives the camera instead
+    html = fig.to_html(full_html=True, include_plotlyjs=include_plotlyjs, div_id=div_id,
+                       default_width="100%", default_height=f"{int(height)}px",
+                       config={"displayModeBar": False, "responsive": True})
+    js = _ORBIT_JS % dict(div_id=div_id, period=float(period_s), fps=int(fps), resume=RESUME_AFTER_MS)
+    style = "<style>html,body{margin:0;background:transparent;overflow:hidden}</style>"
+    return html.replace("<head>", "<head>" + style, 1).replace("</body>", js + "</body>", 1)
