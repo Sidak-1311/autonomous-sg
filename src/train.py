@@ -105,14 +105,18 @@ DRIVER_TEXT = {
 }
 
 
+# early_stopping='auto' switches on above 10,000 samples: the final fit on all
+# events would then stop early while the CV folds don't, and its scores would
+# no longer match the OOF scale the calibration and alert threshold come from.
 def _clf():
     return HistGradientBoostingClassifier(max_iter=MAX_ITER, learning_rate=0.05,
-                                          class_weight="balanced", random_state=SEED)
+                                          class_weight="balanced", early_stopping=False,
+                                          random_state=SEED)
 
 
 def _reg(**kw):
     return HistGradientBoostingRegressor(max_iter=MAX_ITER, learning_rate=0.05,
-                                         random_state=SEED, **kw)
+                                         early_stopping=False, random_state=SEED, **kw)
 
 
 class _Constant:

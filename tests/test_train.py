@@ -262,3 +262,10 @@ def test_predict_tier_probabilities_after_calibration():
     old = {**bundle, "models": {k: v for k, v in bundle["models"].items() if k != "clf_elev"}}
     old.pop("calibration_elev")
     assert train.predict(old, ev.head(5))["p_critical"].notna().all()
+
+
+def test_models_never_early_stop():
+    # The final fit (all events) must match the CV folds' capacity, or the
+    # calibration fit on OOF scores doesn't apply to it
+    assert train._clf().early_stopping is False
+    assert train._reg(loss="absolute_error").early_stopping is False
