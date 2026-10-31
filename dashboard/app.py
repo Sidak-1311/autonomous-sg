@@ -17,6 +17,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from src.physics import combined_sigma, dilution  # noqa: E402
 from src.tiering import (  # noqa: E402
     CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, RISK_CRITICAL, RISK_ELEVATED, RISK_FLOOR, SAFE,
     TIER_COLORS, TIER_RANK, TIERS, rule_fired, tier_array,
@@ -26,7 +27,8 @@ DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
 PROCESSED = DATA / "processed"
 DECISION_DAYS = 2.0  # the latest CDM the model may see is at time_to_tca >= 2 days
 RAW_COLS = ["event_id", "time_to_tca", "risk", "max_risk_estimate", "miss_distance", "relative_speed",
-            "relative_position_r", "relative_position_t", "relative_position_n", "c_object_type"]
+            "relative_position_r", "relative_position_t", "relative_position_n", "c_object_type",
+            "c_sigma_r", "t_sigma_r"]
 
 
 def stub_from_raw(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -43,6 +45,8 @@ def stub_from_raw(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     ev["reason"] = [rule_fired(r, m) for r, m in zip(ev.risk_latest, ev.miss_latest_m)]
     ev = ev.assign(p_critical=np.nan, drivers="", forecast_source="stub", risk_final=np.nan, miss_final_m=np.nan,
                    tier_actual=None)
+    ev["pc_diluted"], ev["risk_potential"] = dilution(ev.risk_latest, ev.miss_latest_m,
+                                                      combined_sigma(ev.c_sigma_r, ev.t_sigma_r))
     return ev.reset_index(drop=True), cdms
 
 
@@ -53,6 +57,8 @@ def load(data_dir: str, stamp: tuple) -> tuple[pd.DataFrame, pd.DataFrame, str]:
         events = pd.read_parquet(PROCESSED / "events_scored.parquet")
         cdms = pd.read_parquet(PROCESSED / "cdms.parquet")
         sources = ", ".join(sorted(events.forecast_source.dropna().unique()))
+        if "pc_diluted" not in events:  # pipeline output from before the dilution flag
+            events = events.assign(pc_diluted=False, risk_potential=events.risk_latest)
         return events, cdms, f"pipeline output ({sources})"
     events, cdms = stub_from_raw(DATA / "test_data.csv")
     return events, cdms, "stub from test_data.csv (no pipeline output yet)"
@@ -109,7 +115,7 @@ queue_tab, detail_tab, fleet_tab, window_tab = st.tabs(
 with queue_tab:
     queue = queue_order(shown[shown.tier_final != SAFE])
     st.dataframe(queue[["event_id", "tier_final", "tier_now", "p_critical", "risk_latest", "risk_forecast",
-                        "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type", "reason", "drivers"]],
+                        "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type", "pc_diluted", "reason", "drivers"]],
                  hide_index=True, width="stretch", column_config={
                      "p_critical": st.column_config.ProgressColumn("P(critical)", min_value=0, max_value=1),
                      "risk_latest": st.column_config.NumberColumn("risk now", format="%.2f"),
@@ -117,6 +123,9 @@ with queue_tab:
                      "miss_latest_m": st.column_config.NumberColumn("miss now (m)", format="%d"),
                      "miss_forecast_m": st.column_config.NumberColumn("miss at TCA (m)", format="%d"),
                      "time_to_tca": st.column_config.NumberColumn("days to TCA", format="%.2f"),
+                     "pc_diluted": st.column_config.CheckboxColumn(
+                         "Pc diluted", help="Low Pc only because tracking is poor. See Fleet overview for whether "
+                                            "this predicted anything on known outcomes."),
                  })
 
     # Alert-fatigue curve: where outcomes are known (train), how many truly Critical events an analyst
@@ -160,6 +169,9 @@ with detail_tab:
             if pd.notna(final):
                 fig.add_trace(go.Scatter(x=[0], y=[final], mode="markers", marker_symbol="x", name="actual at TCA"))
             fig.add_vline(x=DECISION_DAYS, line_dash="dot", annotation_text="decision point")
+        if e.pc_diluted:
+            risk.add_trace(go.Scatter(x=[e.time_to_tca] * 2, y=[e.risk_latest, e.risk_potential], mode="lines+markers",
+                                      line_dash="dot", name="if tracking were sharp (σ = d/√2)"))
             fig.update_xaxes(autorange="reversed", title="days to TCA")
             fig.update_layout(legend=dict(orientation="h", y=-0.25))
         a.plotly_chart(risk, width="stretch")
@@ -200,6 +212,33 @@ with fleet_tab:
                         labels={y: "Risk, log10(Pc)", "tier_final": "tier"})
     hist.add_annotation(x=RISK_FLOOR, y=0, yanchor="bottom", text="floor: Pc ≈ 0", showarrow=False)
     right.plotly_chart(hist, width="stretch")
+
+    # Pc dilution is shown as a hypothesis tested against outcomes, not as a warning: on the training data
+    # it does not predict danger, and the dashboard says so whenever the outcomes show it.
+    st.subheader("Pc dilution: does a 'low because poorly tracked' Pc hide danger?")
+    flagged = shown.pc_diluted.astype(bool)
+    st.caption(f"{int(flagged.sum()):,} of {len(shown):,} events are flagged: their covariance is wider than the "
+               "σ = d/√2 at which Pc peaks, so sharper tracking alone could raise Pc by 10× or more.")
+    known = shown[shown.tier_actual.notna() & shown.risk_final.notna()]
+    if known.empty:
+        st.info("No known outcomes for these events, so the flag can't be checked here. "
+                "Choose the train split to see whether it predicted anything.")
+    else:
+        check = (known.assign(flag=np.where(known.pc_diluted.astype(bool), "flagged", "not flagged"),
+                              critical=known.tier_actual == CRITICAL, change=known.risk_final - known.risk_latest)
+                 .groupby("flag").agg(events=("critical", "size"), ended_critical=("critical", "mean"),
+                                      median_change=("change", "median")))
+        st.dataframe(check, width="stretch", column_config={
+            "ended_critical": st.column_config.NumberColumn("ended Critical", format="percent"),
+            "median_change": st.column_config.NumberColumn("median change in log10 Pc to TCA", format="%.1f")})
+        if {"flagged", "not flagged"} <= set(check.index):
+            f, n = check.ended_critical["flagged"], check.ended_critical["not flagged"]
+            if f > n:
+                st.success(f"Flagged events ended Critical more often ({f:.1%} vs {n:.1%}).")
+            else:
+                st.warning(f"Measured failure: flagged events ended Critical no more often than the rest "
+                           f"({f:.1%} vs {n:.1%}). As tracking improves, σ usually falls far below d/√2, so the "
+                           "peak Pc is never reached. Treat the flag as a tracking-quality note, not a risk signal.")
 
 with window_tab:
     # ponytail: events have no shared clock, so each event's decision-point CDM counts as "now" and its TCA
