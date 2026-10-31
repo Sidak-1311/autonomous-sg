@@ -28,7 +28,7 @@ LOCKBOX_OUT = ROOT / "models" / "error_analysis_lockbox.json"
 HOLDOUT_PRED = ROOT / "models" / "holdout_predictions.parquet"
 HOLDOUT_METRICS = ROOT / "models" / "holdout_metrics.json"
 HOLDOUT_OUT = ROOT / "models" / "error_analysis_holdout.json"
-PRED_COLS = ["tier_final", "p_critical", "risk_forecast", "miss_forecast_m"]
+PRED_COLS = ["tier_final", "p_critical", "risk_forecast", "risk_forecast_q90", "miss_forecast_m", "watch"]
 
 CUTOFF_DAYS = 2.0
 JUMP_ORDERS = 2.0      # Pc rising by >= 2 orders of magnitude after the decision point
@@ -37,15 +37,16 @@ NEAR_FACTOR = 2.0      # P(crit) within a factor 2 below the alert threshold
 # Primary causes for a missed Critical, checked in this order.
 FN_CAUSES = {
     "withheld_for_review": "forecast withheld (stale or single CDM) and sent to an analyst: refused, not silent",
+    "on_watch": "put on Watch (P(crit) between the alert and Critical thresholds): an analyst sees it, not silent",
     "no_evidence_after_cutoff": "Pc jumped from the -30 floor (no measurable risk) at the decision point",
-    "late_jump": f"Pc rose >= {JUMP_ORDERS:g} orders of magnitude after the decision point",
+    "late_jump": f"Pc rose ≥ {JUMP_ORDERS:g} orders of magnitude after the decision point",
     "miss_driven": "Critical only because the final miss < 1,000 m; Pc stayed < 1.0×10⁻⁴",
     "near_threshold": f"P(Critical) within {NEAR_FACTOR:g}x below the alert threshold",
     "other": "none of the above",
 }
 FP_CAUSES = {
     "critical_now": "already Critical at the decision point, then resolved before TCA",
-    "pc_fell": f"Pc fell >= {JUMP_ORDERS:g} orders of magnitude after the decision point",
+    "pc_fell": f"Pc fell ≥ {JUMP_ORDERS:g} orders of magnitude after the decision point",
     "miss_opened": "miss < 1,000 m at the decision point, > 1,000 m at TCA",
     "alert_threshold": "raised by P(Critical) above the 95%-recall alert threshold",
     "other": "none of the above",
@@ -82,6 +83,7 @@ def _fn_flags(d: pd.DataFrame, threshold: float) -> pd.DataFrame:
     jump = d["risk_true"] - d["risk_latest"]
     return pd.DataFrame({
         "withheld_for_review": d["needs_review"].fillna(False).astype(bool),
+        "on_watch": (d["watch"] if "watch" in d else pd.Series(False, index=d.index)).fillna(False).astype(bool),
         "no_evidence_after_cutoff": d["risk_latest"] <= -30 + 1e-9,
         "late_jump": jump >= JUMP_ORDERS,
         "miss_driven": (d["miss_true_m"] < MISS_CRITICAL_M) & (d["risk_true"] < RISK_CRITICAL),
@@ -164,7 +166,7 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
     fn_flags, fp_flags = _fn_flags(fn, threshold), _fp_flags(fp, threshold)
     late = d["final_ttca"] < CUTOFF_DAYS
     n_crit = int(is_crit.sum())
-    silent = int((~fn_flags["withheld_for_review"]).sum())
+    silent = int((~(fn_flags["withheld_for_review"] | fn_flags["on_watch"])).sum())
     return {
         "n_events": int(len(d)),
         "n_critical": n_crit,
@@ -184,6 +186,24 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
         "missed_examples": _examples(fn, _primary(fn_flags, FN_CAUSES), k=len(fn)),
         "false_alarm_examples": _examples(fp, _primary(fp_flags, FP_CAUSES), k=2),
     }
+
+
+def holdout_issued(hold: pd.DataFrame, ev: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    """The 80% model's holdout forecasts issued with today's rule (as score.holdout_metrics does):
+    Critical = rules now, forecast state, or P(crit) >= the Critical threshold; refused events keep
+    tier_now; Watch = not Critical, not refused, P(crit) in [alert threshold, Critical threshold)."""
+    import joblib
+    from src.tiering import worse
+    from src.train import CRIT_CONFIRM_P
+    confirm = float(joblib.load(ROOT / "models" / "forecaster.joblib").get("crit_confirm_threshold", CRIT_CONFIRM_P))
+    refused = hold["event_id"].isin(ev.loc[ev["needs_review"].astype(bool), "event_id"]).to_numpy()
+    fc = tier_array(hold["risk_forecast_q90"], hold["miss_forecast_m"])
+    fc[hold["p_critical"].to_numpy() >= confirm] = CRITICAL
+    rule = np.array([worse(a, b) for a, b in zip(hold["tier_now"], fc)], dtype=object)
+    issued = np.where(refused, hold["tier_now"].to_numpy(dtype=object), rule)
+    p = hold["p_critical"].to_numpy()
+    watch = (issued != CRITICAL) & ~refused & (p >= threshold) & (p < confirm)
+    return hold.assign(tier_final=issued, watch=watch)[["event_id", *PRED_COLS]]
 
 
 def main(argv=None):
@@ -206,9 +226,9 @@ def main(argv=None):
         finals, out = final_outcomes(pd.read_parquet(PROCESSED / "cdms.parquet")), a.out or OUT
         scope = "all train events (OOF where trained)"
         if a.holdout:
-            pred = pd.read_parquet(HOLDOUT_PRED)[["event_id", *PRED_COLS]]
-            ev = ev.drop(columns=PRED_COLS).merge(pred, on="event_id", how="inner")
             threshold = float(json.loads(HOLDOUT_METRICS.read_text())["crit_threshold"])
+            pred = holdout_issued(pd.read_parquet(HOLDOUT_PRED), ev, threshold)
+            ev = ev.drop(columns=[c for c in PRED_COLS if c in ev]).merge(pred, on="event_id", how="inner")
             out = a.out or HOLDOUT_OUT
             scope = "holdout: 20% of train events by event_id, model fit on the other 80%"
     report = analyse(ev, finals, threshold)
@@ -216,7 +236,7 @@ def main(argv=None):
     out.write_text(json.dumps(report, indent=2, default=lambda x: None if x != x else x))
     m = report["missed_critical"]
     print(f"{report['n_critical']} Criticals, missed {m['n']} (recall {report['recall_critical']:.3f}); "
-          f"{report['silent_missed_critical']} silent (not sent to review); "
+          f"{report['silent_missed_critical']} silent (not on Watch or review); "
           f"false alarms {report['false_alarm']['n']}")
     for c, v in m["by_cause"].items():
         print(f"  {c:26s} {v['n']:4d}  (flag on {v['flag_n']})")

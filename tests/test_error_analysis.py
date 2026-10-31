@@ -119,3 +119,14 @@ def test_lockbox_outcomes_reads_true_risk_or_risk():
     assert f.loc[7, "tier_true"] == CRITICAL and f.loc[8, "tier_true"] == CRITICAL
     g = lockbox_outcomes(raw.rename(columns={"true_risk": "risk"}))
     assert list(g["tier_true"]) == list(f["tier_true"])
+
+
+def test_watch_counts_as_reaching_an_analyst_not_silent():
+    c = _cdms([("train", 1, 0.3, -3.0, 9_000.0), ("train", 2, 0.3, -3.0, 9_000.0)])
+    ev = _ev([(1, ELEVATED, ELEVATED, -5.0, 9_000.0, 0.10, False),
+              (2, ELEVATED, ELEVATED, -5.0, 9_000.0, 0.01, False)]).assign(watch=[True, False])
+    r = analyse(ev, final_outcomes(c), THR)
+    assert r["missed_critical"]["by_cause"]["on_watch"]["n"] == 1
+    assert r["silent_missed_critical"] == 1 and r["recall_critical_incl_review"] == 0.5
+    no_col = analyse(ev.drop(columns="watch"), final_outcomes(c), THR)      # older files: no watch column
+    assert no_col["silent_missed_critical"] == 2
