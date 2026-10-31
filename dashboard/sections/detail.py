@@ -99,6 +99,11 @@ def render(ctx):
         if not forecast:
             st.markdown(note_card("Insufficient evidence", f"{text(e.review_reason)}. No forecast or maneuver is "
                                   "shown; review this event from its CDM history.", CRITICAL), unsafe_allow_html=True)
+        elif bool(e.get("watch", False)):   # between the 95%-recall threshold and the 15% Critical threshold
+            st.markdown(note_card(
+                "Watch", f"P(Critical at TCA) is {format_prob(e.p_critical)}: above the recall threshold, so an "
+                "analyst should look, but under the 15% needed to call it Critical. No maneuver is planned.",
+                ELEVATED), unsafe_allow_html=True)
         elif pd.notna(e.maneuver_dr_m):  # the pipeline plans one for CRITICAL events only
             if e.maneuver_dr_m == 0:
                 st.markdown(note_card("Suggested maneuver", "None from geometry: the separation already clears the "

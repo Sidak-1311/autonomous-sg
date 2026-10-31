@@ -119,6 +119,44 @@ def test_no_probability_columns_no_bar(tmp_path, monkeypatch):
     assert "Final tier at TCA" not in page_text(render(write_pipeline(tmp_path), monkeypatch))
 
 
+def test_threshold_rows_keep_rule_criticals_and_never_raise_refusals():
+    import pandas as pd
+    train = pd.DataFrame({
+        "tier_actual": ["CRITICAL", "CRITICAL", "SAFE", "ELEVATED", "CRITICAL"],
+        "tier_now": ["CRITICAL", "SAFE", "SAFE", "SAFE", "SAFE"],
+        "p_critical": [0.01, 0.12, 0.30, 0.16, 0.90],
+        "needs_review": [False, False, False, False, True]})
+    rows = evaluation.threshold_rows(train).set_index("threshold")
+    # at 15%: rule-Critical 0 kept, 2 (0.30) and 3 (0.16) raised; 1 (0.12) not; 4 never (refusal)
+    assert rows.loc[0.15, "flagged"] == 3 and rows.loc[0.15, "false_alarms"] == 2 and rows.loc[0.15, "missed"] == 2
+    assert rows.loc[0.10, "flagged"] == 4 and abs(rows.loc[0.10, "recall"] - 2 / 3) < 1e-9
+    assert rows.loc[0.50, "flagged"] == 1 and rows.loc[0.50, "precision"] == 1.0
+
+
+def test_tradeoff_table_and_reach_card(tmp_path, monkeypatch):
+    model = {**METRIC_RUN, "recall_reach": 0.958}
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "model": model}), monkeypatch)
+    text = page_text(at)
+    assert ">95.8%<" in text and "Real Criticals that reach an analyst" in text
+    assert "Alert threshold · fewer false alarms cost recall" in text and "15%</span> · chosen" in text
+
+
+def test_watch_event_gets_a_watch_card_not_a_maneuver(tmp_path, monkeypatch):
+    import pandas as pd
+    from dashboard.test_app import by_label
+    root = write_pipeline(tmp_path)
+    path = root / "processed" / "events_scored.parquet"
+    ev = pd.read_parquet(path)
+    ev["watch"] = ev.event_id == 2     # event 2: SAFE, enough evidence, P(crit) 0.1 in the fixture
+    ev.to_parquet(path)
+    at = render(root, monkeypatch)
+    by_label(at.selectbox, "Event (worst first)").set_value(2).run()
+    text = page_text(at)
+    assert "under the 15% needed to call it Critical" in text and "Suggested maneuver" not in text
+    by_label(at.selectbox, "Event (worst first)").set_value(1).run()   # not on watch
+    assert "under the 15% needed" not in page_text(at)
+
+
 def test_no_lockbox_no_block(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN}), monkeypatch)
     assert "Hidden test set" not in page_text(at)

@@ -43,6 +43,9 @@ def headline(metrics: dict | None):
             cards.append(big_card(f"{run[key]:.1%}", f"{caption} · {who}",
                                   (f"baseline {base[key]:.1%} · " if model and comparable else "")
                                   + ci_text(run, key, True)))
+    if model and model.get("recall_reach") is not None:
+        cards.append(big_card(f"{model['recall_reach']:.1%}", "Real Criticals that reach an analyst",
+                              "Called Critical, put on Watch, or sent for review: nothing here is a silent miss."))
     for col, html in zip(st.columns(len(cards)) if cards else [], cards):
         col.markdown(html, unsafe_allow_html=True)
     if not comparable:
@@ -210,7 +213,47 @@ def render(ctx):
     for col, (title, body) in zip(st.columns(len(failures)) if failures else [], failures):
         col.markdown(failure_card(title, body), unsafe_allow_html=True)
     misses(load_error_analysis())
+    tradeoff(ctx.events)
     lockbox((metrics or {}).get("test_lockbox"), load_error_analysis(LOCKBOX_ANALYSIS))
+
+
+TRADEOFF_THRESHOLDS = [0.10, 0.15, 0.20, 0.30, 0.50]
+CRITICAL_THRESHOLD = 0.15   # the team's choice (room decision): Critical from the forecast only at >= 15%
+
+
+def threshold_rows(train: pd.DataFrame) -> pd.DataFrame:
+    """Recall / precision / false alarms if the forecast raised an event to Critical only at P(crit) >= t.
+    Rule-Critical events stay Critical and refusals are never raised, exactly as deployed."""
+    truth = train.tier_actual == CRITICAL
+    rule, p = train.tier_now == CRITICAL, train.p_critical.fillna(0)
+    rev = train.needs_review.astype(bool)
+    rows = []
+    for t in TRADEOFF_THRESHOLDS:
+        flag = rule | ((p >= t) & ~rev)
+        rows.append({"threshold": t, "flagged": int(flag.sum()), "recall": flag[truth].mean() if truth.any() else np.nan,
+                     "precision": truth[flag].mean() if flag.any() else np.nan,
+                     "false_alarms": int((flag & ~truth).sum()), "missed": int((~flag & truth).sum())})
+    return pd.DataFrame(rows)
+
+
+def tradeoff(events: pd.DataFrame):
+    """Why 15%: the threshold trade-off on train outcomes (out of fold), whatever split is on screen."""
+    train = events[(events.split == "train") & events.tier_actual.notna() & events.p_critical.notna()]
+    if not (train.tier_actual == CRITICAL).any():
+        return
+    st.markdown(f'<div style="margin-top:2rem">{style.label("Alert threshold · fewer false alarms cost recall")}</div>',
+                unsafe_allow_html=True)
+    rows = threshold_rows(train)
+    pct = lambda v, r: f"{v:.1%}"  # noqa: E731
+    st.markdown(style.html_table(rows, [
+        ("threshold", "Critical at P(crit) ≥", "l",
+         lambda v, r: f'<span class="strong">{v:.0%}</span>' + (" · chosen" if np.isclose(v, CRITICAL_THRESHOLD) else "")),
+        ("flagged", "Flagged Critical", "r", lambda v, r: f"{v:,}"),
+        ("recall", "Recall", "r", pct), ("precision", "Precision", "r", pct),
+        ("false_alarms", "False alarms", "r", lambda v, r: f"{v:,}"),
+        ("missed", "Missed Criticals", "r", lambda v, r: f"{v:,}")]), unsafe_allow_html=True)
+    st.caption(f"{len(train):,} train events with known outcomes, out of fold. Events between the recall threshold and "
+               "15% become Watch: queued for an analyst, not called Critical.")
 
 
 ERROR_ANALYSIS = ROOT / "models" / "error_analysis.json"   # written by `python -m src.error_analysis`
