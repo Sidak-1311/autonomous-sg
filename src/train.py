@@ -294,7 +294,11 @@ def predict(bundle: dict, ev_df: pd.DataFrame) -> pd.DataFrame:
 def _isotonic_map(p: np.ndarray, y: np.ndarray) -> dict:
     """Isotonic fit of y on p, as a strictly increasing piecewise-linear map
     through the centre of each constant block (a step function would tie
-    events and reshuffle the queue)."""
+    events and reshuffle the queue).
+
+    An end block where every event had the same outcome would map to exactly
+    0 or 1, a certainty a finite sample can't support; those two blocks get
+    the Jeffreys estimate (k + 1/2) / (n + 1) instead, kept strictly monotone."""
     from sklearn.isotonic import IsotonicRegression
     fit = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0).fit_transform(p, y)
     order = np.argsort(p, kind="stable")
@@ -302,6 +306,14 @@ def _isotonic_map(p: np.ndarray, y: np.ndarray) -> dict:
     block = np.r_[0, np.cumsum(np.diff(fs) != 0)]
     x = np.array([ps[block == b].mean() for b in np.unique(block)])
     v = np.array([fs[block == b][0] for b in np.unique(block)])
+    n = np.array([(block == b).sum() for b in np.unique(block)])
+    k = v * n   # isotonic block value = observed rate in the block
+    if len(v) > 1:
+        # never past the neighbouring block (halfway at most), so the map stays strictly increasing
+        v[0] = min((k[0] + 0.5) / (n[0] + 1), (v[0] + v[1]) / 2)
+        v[-1] = max((k[-1] + 0.5) / (n[-1] + 1), (v[-2] + v[-1]) / 2)
+    elif len(v) == 1:
+        v[0] = (k[0] + 0.5) / (n[0] + 1)
     return {"x": x.tolist(), "y": v.tolist()}
 
 

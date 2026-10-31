@@ -204,3 +204,14 @@ def test_predict_and_storm_use_calibration():
     assert np.allclose(out["p_critical"], raw / 2)
     storm = train.storm_stress({**bundle, "calibration": cal}, ev, {c: -1.0 for c in train.STORM_COLS})
     assert np.allclose(storm["p_critical_storm"], raw / 2)
+
+
+def test_calibration_never_claims_certainty():
+    p = np.linspace(0, 1, 400)
+    y = p > 0.5                        # perfectly separable: plain isotonic maps the ends to exactly 0 and 1
+    m = train._isotonic_map(p, y)
+    q = train.calibrate_p(np.r_[0.0, p, 1.0], m)
+    assert 0 < q.min() and q.max() < 1
+    assert np.all(np.diff(m["y"]) >= 0)
+    one = train._isotonic_map(np.array([0.2, 0.4]), np.array([True, True]))   # a single block
+    assert 0 < one["y"][0] < 1
