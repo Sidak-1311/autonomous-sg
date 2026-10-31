@@ -15,6 +15,7 @@ import pandas as pd
 
 from src.features import build_event_table
 from src.ingest import COLUMNS, PROCESSED_DIR, load_all
+from src.physics import combined_sigma, radial_maneuver
 from src.tiering import CRITICAL, TIERS, rule_fired, tier_array, worse
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ EVENT_COLS = [
     "risk_slope", "risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical",
     "tier_now", "tier_forecast", "tier_final", "reason", "drivers", "forecast_source",
     "risk_final", "miss_final_m", "tier_actual",
+    "maneuver_dr_m", "maneuver_dv_mps",
 ]
 
 
@@ -68,6 +70,19 @@ def _reason(row) -> str:
     return text
 
 
+def _add_maneuver(ev: pd.DataFrame) -> None:
+    """Suggested radial offset and burn for Critical events, planned on the
+    worse of the latest and forecast state."""
+    risk = np.maximum(ev["risk_latest"], ev["risk_forecast_q90"])
+    miss = np.minimum(ev["miss_latest_m"], ev["miss_forecast_m"])
+    dr, dv = radial_maneuver(risk, miss, ev["relative_position_r"], ev["relative_position_t"],
+                             ev["relative_position_n"],
+                             combined_sigma(ev["c_sigma_r"], ev["t_sigma_r"]))
+    critical = ev["tier_final"] == CRITICAL
+    ev["maneuver_dr_m"] = np.where(critical, dr, np.nan)
+    ev["maneuver_dv_mps"] = np.where(critical, dv, np.nan)
+
+
 def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev = build_event_table(cdms)
     out = model_forecast(ev)
@@ -82,6 +97,7 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev.loc[ev["p_critical"] >= threshold, "tier_forecast"] = CRITICAL
     ev["tier_final"] = [worse(a, b) for a, b in zip(ev["tier_now"], ev["tier_forecast"])]
     ev["reason"] = [_reason(r) for r in ev.itertuples()]
+    _add_maneuver(ev)
 
     # Queue order: worst tier, then highest forecast risk, then soonest TCA
     ev["_rank"] = ev["tier_final"].map({t: i for i, t in enumerate(TIERS)})

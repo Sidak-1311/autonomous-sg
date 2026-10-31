@@ -37,6 +37,11 @@ FEATURES = [
 ] + [f"obj_{t.replace(' ', '_')}" for t in OBJECT_TYPES]
 
 
+TREND_COLS = ["n_cdms", "risk_slope", "risk_delta_last", "risk_min", "risk_max", "risk_std",
+              "miss_slope", "miss_delta_last", "sigma_shrink", "F10_mean", "AP_mean",
+              "trend_days"]
+
+
 def _slope(t: np.ndarray, y: np.ndarray) -> float:
     """Change in y per day as TCA approaches (positive = rising)."""
     if len(t) < 2 or np.ptp(t) == 0:
@@ -75,8 +80,12 @@ def build_event_table(cdms: pd.DataFrame, cutoff: float = CUTOFF_DAYS) -> pd.Dat
 
     latest = hist.groupby(keys).last()[LATEST_COLS]
     latest = latest.rename(columns={"risk": "risk_latest", "miss_distance": "miss_latest_m"})
-    trends = hist.groupby(keys)[["time_to_tca", "risk", "miss_distance", "c_sigma_r",
-                                 "t_sigma_r", "F10", "AP"]].apply(_event_trends)
+    if hist.empty:
+        # groupby-apply on an empty frame returns the input columns, not ours
+        trends = pd.DataFrame(columns=TREND_COLS, index=latest.index, dtype=float)
+    else:
+        trends = hist.groupby(keys)[["time_to_tca", "risk", "miss_distance", "c_sigma_r",
+                                     "t_sigma_r", "F10", "AP"]].apply(_event_trends)
     ev = latest.join(trends)
     ev["n_cdms"] = ev["n_cdms"].astype(int)
 
