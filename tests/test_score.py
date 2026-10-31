@@ -111,6 +111,9 @@ def test_lockbox_scores_only_test_rows(tmp_path):
                   "risk": [-7.0, -3.2, -30.0], "miss_distance": [9_000, 800, 20_000]}).to_csv(path, index=False)
     out = score_mod.attach_lockbox(ev, path)
     assert list(out.tier_true) == ["CRITICAL", "SAFE", None]       # last CDM per event; train rows untouched
+    zenodo = tmp_path / "zenodo.csv"                                   # the published file says 'true_risk'
+    pd.read_csv(path).rename(columns={"risk": "true_risk"}).to_csv(zenodo, index=False)
+    assert list(score_mod.attach_lockbox(ev, zenodo).tier_true) == ["CRITICAL", "SAFE", None]
     m = score_mod.lockbox_metrics(out)
     assert m["n"] == 2 and m["model"]["confusion"]["recall"]["CRITICAL"] == 1.0
     assert m["baseline"]["confusion"]["recall"]["CRITICAL"] == 0.0

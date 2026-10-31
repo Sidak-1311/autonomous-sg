@@ -255,7 +255,11 @@ def attach_lockbox(ev: pd.DataFrame, path: Path = LOCKBOX_PATH) -> pd.DataFrame:
     ev = ev.assign(tier_true=None, risk_true=np.nan, miss_true=np.nan)
     if not path.exists():
         return ev
-    truth = pd.read_csv(path, usecols=["event_id", "time_to_tca", "risk", "miss_distance"])
+    # The Zenodo file names the column 'true_risk'; accept 'risk' too (renamed copies)
+    header = pd.read_csv(path, nrows=0).columns
+    risk_col = "true_risk" if "true_risk" in header else "risk"
+    truth = (pd.read_csv(path, usecols=["event_id", "time_to_tca", risk_col, "miss_distance"])
+             .rename(columns={risk_col: "risk"}))
     final = truth.sort_values("time_to_tca").groupby("event_id").first()   # last CDM before TCA
     test = ev["split"] == "test"
     ids = ev.loc[test, "event_id"]
