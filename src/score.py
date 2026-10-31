@@ -16,6 +16,7 @@ import pandas as pd
 from src.cascade import CATALOG_COLUMNS, CATALOG_PATH, cascade, load_catalog
 from src.cascade import COLUMNS as CASCADE_OUT
 from src.features import build_event_table
+from src.train import CRIT_CONFIRM_P  # the 15% Critical threshold lives with the 95%-recall one
 from src.ingest import CASCADE_COLUMNS, COLUMNS, PROCESSED_DIR, load_all
 from src.physics import combined_sigma, dilution, radial_maneuver
 from src.tiering import (CRITICAL, RISK_FLOOR, TIERS, format_miss, format_pc, format_prob, rule_fired,
@@ -26,7 +27,7 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = ROOT / "models"
 LOCKBOX_PATH = ROOT / "data" / "external" / "kelvins" / "test_data_private.csv"
-CRIT_CONFIRM_DEFAULT = 0.15  # P(crit) at which a forecast is issued as Critical (user decision)
+CRIT_CONFIRM_DEFAULT = CRIT_CONFIRM_P  # fallback if a bundle predates bundle['crit_confirm_threshold']
 MODEL_PATH = MODELS_DIR / "forecaster.joblib"
 CONFORMAL_PATH = MODELS_DIR / "conformal.json"
 OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
