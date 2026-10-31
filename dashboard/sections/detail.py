@@ -7,10 +7,9 @@ NO_TOOLBAR = {"displayModeBar": False}  # it sat on top of the chart titles; zoo
 
 
 def stat(value: str, caption: str, tier: str | None = None) -> str:
-    """A header-strip number: the hero_stat look at a size that fits six across."""
-    color = TIER_COLORS[tier] if tier else style.TEXT
-    return (f'<div class="bm-hero"><span class="num" style="font-size:clamp(1.6rem,2.4vw,2.6rem);color:{color};'
-            f'white-space:nowrap">{value}</span>{style.label(caption)}</div>')
+    """A header-strip number: the shared row size, a notch smaller so six fit across."""
+    return style.hero_stat(value, caption, tier, size="row").replace(
+        'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);color:', 1)
 
 
 def note_card(title: str, body: str, tier: str | None = None) -> str:
