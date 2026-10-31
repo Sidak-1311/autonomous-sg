@@ -81,40 +81,51 @@ so nothing shown on train events was predicted by a model that saw them.
 
 Target: the tier of each event's last CDM, predicted from CDMs at least 2 days before TCA.
 Headline numbers come from a **fixed 80/20 split of train events by `event_id`** (seed 42):
-models, calibration and the alert threshold are fit on the 80% only, then scored once on
-the untouched 2,389 events (154 Critical). The baseline is today's practice: the tier of the
-latest CDM at the 2-day decision point.
+models, calibration and the thresholds are fit on the 80% only, then scored once on the
+untouched 2,389 events (154 Critical). The baseline is today's practice: the tier of the
+latest CDM at the 2-day decision point. All model numbers are **as deployed**: an event is
+issued Critical when the rules say so now or its calibrated P(Critical at TCA) is at least
+15%; between the 95%-recall threshold (4.9%) and 15% it goes on **Watch** (an analyst looks
+at it, no maneuver call); refused events (insufficient evidence) keep their current tier and
+go to an analyst. *Reach* = share of real Criticals that land in front of an analyst as
+Critical, Watch or a refusal.
 
 | Held out (2,389 events) | Latest-tier baseline | Triage-TCA | |
 |---|---|---|---|
-| Critical recall | 0.877 [0.82, 0.93] | **0.981** [0.96, 1.00] | 151 of 154 Criticals caught, vs 135 |
-| Critical precision | 0.808 [0.74, 0.87] | 0.487 [0.43, 0.54] | price: about 2x the Critical list |
-| Critical recall, hard subset (final CDM < 2 d, 1,741 events) | 0.829 | **0.973** | where the tier actually changes |
+| Critical recall | 0.877 | **0.916** | 141 of 154 Criticals issued Critical, vs 135 |
+| Critical precision | 0.808 | 0.684 | 206 Critical calls vs 167 |
+| Reach (Critical, Watch or review) | 0.890 | **0.981** | 151 of 154 in front of an analyst; 90 on Watch |
+| Hard subset (final CDM < 2 d, 1,741 events): recall / reach | 0.829 / 0.847 | **0.883 / 0.973** | where the tier actually changes |
 
 Confusion matrices on the holdout (rows = actual tier at TCA, columns = issued tier):
 
 | Model | Safe | Elevated | Critical | | Baseline | Safe | Elevated | Critical |
 |---|---|---|---|---|---|---|---|---|
-| **Safe** | 1,714 | 48 | 23 | | **Safe** | 1,721 | 57 | 7 |
-| **Elevated** | 29 | 285 | 136 | | **Elevated** | 31 | 394 | 25 |
-| **Critical** | 2 | 1 | **151** | | **Critical** | 3 | 16 | 135 |
+| **Safe** | 1,721 | 54 | 10 | | **Safe** | 1,721 | 57 | 7 |
+| **Elevated** | 31 | 364 | 55 | | **Elevated** | 31 | 394 | 25 |
+| **Critical** | 3 | 10 | **141** | | **Critical** | 3 | 16 | 135 |
+
+Before the 15% rule we issued Critical at the 95%-recall threshold: held-out recall 0.968 but
+precision 0.503 (its 147 false Critical calls on these 2,389 events became 65 here). That rule is kept
+in `metrics.json` (`model_95pct_recall_rule`) for comparison.
 
 Across all 11,942 events, out of fold:
 
 | | Latest-tier baseline | Triage-TCA | |
 |---|---|---|---|
-| Critical recall | 0.866 [0.84, 0.89] | **0.953** [0.94, 0.97] | |
-| Critical precision | 0.851 [0.83, 0.88] | 0.553 [0.53, 0.58] | |
-| Queue depth to catch 95% of Criticals | 2,176 [1,883, 2,341] | **1,440 [1,331, 1,763]** | 34% fewer reviews [22%, 39%] |
+| Critical recall | 0.866 [0.84, 0.89] | **0.908** [0.89, 0.93] | |
+| Critical precision | 0.851 [0.83, 0.88] | 0.756 [0.73, 0.78] | |
+| Reach (Critical, Watch or review) | 0.878 | **0.959** | 378 on Watch |
+| Queue depth to catch 95% of Criticals | 2,176 [1,871, 2,340] | **1,402 [1,191, 1,723]** | 36% fewer reviews [21%, 44%] |
 | P(Critical) Brier score | 0.065 (climatology) | **0.016** (0.018 before calibration) | P(crit) is a calibrated probability |
 | P(Elevated or worse) Brier score | 0.188 (climatology) | **0.030** | |
 | F2 / MSE on high-risk / ESA loss | 0.806 / 3.50 / 4.35 | same | risk forecast falls back to baseline (below) |
 
 **Hidden test set (lockbox).** The ESA Kelvins challenge later published the final CDM of
 every test event (Zenodo 4463683). We use it only to score the frozen model, never to train,
-tune, pick thresholds or choose between models: Critical recall **0.927** vs 0.824 baseline,
-precision 0.452 vs 0.855 (2,167 events, 193 Critical; 7 Criticals issued Safe, listed with
-causes in the Evaluation tab).
+tune, pick thresholds or choose between models: Critical recall **0.881** vs 0.824 baseline,
+precision 0.691 vs 0.855, reach **0.933** vs 0.829 (2,167 events, 193 Critical; 150 on Watch;
+the Criticals issued Safe are listed with causes in the Evaluation tab).
 
 Brackets are bootstrap 95% CIs (queue depth: paired bootstrap over events). Queue depth
 is measured in the dashboard's queue order (tier, then P(crit), then forecast risk) on
@@ -126,8 +137,8 @@ Before the organisers' label file we trained on the ESA protocol's subset (final
 The 90% conformal interval on Pc at TCA covers 90.1%
 of out-of-fold outcomes; because it is equal-tailed, its top is shown as a **one-sided 95%
 upper bound** and the uninformative lower end is not displayed. On `test_data.csv` the outcomes are hidden (data stop at
-the 2-day cutoff), so test events are scored without them: 396 Critical, 305
-Elevated, 1,466 Safe of 2,167, with 91 refused for insufficient evidence.
+the 2-day cutoff), so test events are scored without them: 246 Critical, 440
+Elevated, 1,481 Safe of 2,167, with 150 on Watch and 91 refused for insufficient evidence.
 Tried and rejected on the holdout: ten extra trend features (last-3-CDM slopes,
 extrapolated miss, miss/σ) gave average precision 0.872 vs 0.871 and lower recall, so the
 simpler model stays.
@@ -146,15 +157,18 @@ simpler model stays.
   279 flagged Safe events ended Critical, and flagged events overall ended Critical less
   often than unflagged ones (1.9% vs 6.8%), because tracking improves far past the Pc peak. It is shown as a tracking-quality note with this measured result,
   never as a warning.
-- **Low alert threshold.** Catching 95% of Criticals needs a calibrated P(crit) ≥ 4.9%, so
-  many events are raised at single-digit probabilities. Every such reason states the
-  threshold explicitly ("P(crit) 33.4% ≥ alert threshold 4.9%, set for 95% recall").
-- **On balanced scores the baseline wins.** Critical-class F2 (recall weighted 4x precision)
-  is 0.816 vs 0.862 on the holdout, 0.833 vs 0.863 out of fold and 0.766 vs 0.830 on the
-  lockbox, model vs latest-tier baseline. On the lockbox the model issues 396 Criticals to the
-  baseline's ~186 to catch 20 more (179 vs 159): about 10 extra reviews per extra catch
-  (holdout: ~9). The case for the model rests on a missed collision costing more than that,
-  and on the ranking: the queue to 95% recall is 34% shorter.
+- **Two thresholds, one of them a policy choice.** Catching 95% of Criticals needs a
+  calibrated P(crit) ≥ 4.9%, which made half the Critical list false alarms. We issue Critical
+  only at ≥ 15% (a user decision, `train.CRIT_CONFIRM_P`) and put 4.9–15% on Watch. That
+  costs Critical recall (0.968 → 0.916 held out) but almost nothing in reach (0.981): the
+  events still reach an analyst, just not as maneuver calls. Every reason states the
+  threshold it crossed ("P(crit) 33.4% ≥ Critical threshold 15.0%").
+- **On balanced scores it's close to a tie.** Critical-class F2 (recall weighted 4x
+  precision) is 0.858 vs 0.862 on the holdout, 0.873 vs 0.863 out of fold and 0.835 vs 0.830
+  on the lockbox, model vs latest-tier baseline. On the lockbox the model issues 246 Criticals
+  to the baseline's 186 to catch 11 more (170 vs 159). The case for the model rests on reach
+  (93% vs 83% of real Criticals in front of an analyst) and on the ranking: the queue to 95%
+  recall is 36% shorter.
 - **Misses are geometry closing late.** All 3 Criticals missed on the holdout (43 of 44 out
   of fold) became Critical by geometry alone: the miss distance closed below 1,000 m after
   the 2-day decision point while Pc stayed below 10⁻⁴ (e.g. event 1936: 13,748 m → 657 m,
