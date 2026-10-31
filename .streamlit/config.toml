@@ -1,29 +1,28 @@
 # Dashboard theme (run from the repo root: streamlit run dashboard/app.py).
-# Near-black + one yellow interface accent, one tight grotesk. Tier colours live in
-# src/tiering.py TIER_COLORS; the yellow accent never encodes data.
+# tesser.sh palette: pure black, hairlines, one pale-lime interface accent (style.ACCENT, chrome only).
+# Tier colours live in src/tiering.py TIER_COLORS; the accent never encodes data.
 [theme]
 base = "dark"
-primaryColor = "#F2F2F2"              # white: widgets and progress bars never borrow the yellow accent,
-                                      # which style.py applies only to chrome (tab underline, marks, ticker)
-backgroundColor = "#101010"
-secondaryBackgroundColor = "#1A1A1A"
-textColor = "#F2F2F2"
+primaryColor = "#F2F2F0"              # white: widgets never borrow the accent, which style.py applies to chrome
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#181817"
+textColor = "#F2F2F0"
 borderColor = "#262626"
 dataframeBorderColor = "#262626"
-dataframeHeaderBackgroundColor = "#161616"
-linkColor = "#F2F2F2"
+dataframeHeaderBackgroundColor = "#0B0B0B"
+linkColor = "#F2F2F0"
 redColor = "#F2386F"                  # = CRITICAL
 orangeColor = "#FF8A3D"               # = ELEVATED
-yellowColor = "#FFD600"
-blueColor = "#8A8A8A"                 # info boxes stay grey, unlike SAFE steel blue
-greenColor = "#8A8A8A"
-font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;800&display=swap"
-headingFont = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;800&display=swap"
-codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap"
-headingFontWeights = [800, 800, 600, 600, 600, 600]
-baseRadius = "12px"
-showWidgetBorder = false
+yellowColor = "#ECF0BD"
+blueColor = "#8E8E88"                 # info boxes stay grey, unlike SAFE steel blue
+greenColor = "#8E8E88"
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap"
+headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap"
+codeFont = "Geist Mono:https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+headingFontWeights = [500, 400, 400, 400, 400, 400]
+baseRadius = "0px"
+showWidgetBorder = true
 
 [theme.sidebar]
-backgroundColor = "#0C0C0C"
-secondaryBackgroundColor = "#1A1A1A"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#181817"

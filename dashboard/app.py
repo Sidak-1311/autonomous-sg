@@ -20,9 +20,10 @@ from dashboard.sections import cascade, detail, evaluation, fleet, queue, window
 from dashboard.sections.common import data_dir, load, processed_dir, read_decisions, stamp  # noqa: E402
 from src.tiering import CRITICAL, SAFE, TIERS, format_miss, format_pc, format_ttca  # noqa: E402
 
-HERO_HEIGHT = 480  # the scene is a flat disc (radial offsets are tiny), so taller is just empty space
+HERO_HEIGHT = 520
 
-st.set_page_config(page_title="Triage-TCA", page_icon=":material/radar:", layout="wide")
+st.set_page_config(page_title="Triage-TCA", page_icon=":material/radar:", layout="wide",
+                   initial_sidebar_state="collapsed")
 style.apply()
 events, cdms, source = load(str(data_dir()), stamp())
 
@@ -53,7 +54,7 @@ st.markdown(style.top_bar([("Split", split), ("Events", f"{len(shown):,}"), ("Fo
                            ("Scored", scored_at)]), unsafe_allow_html=True)
 
 # ---- hero: the claim on the left, every encounter around the primary on the right ----
-left, right = st.columns([5, 7], gap="large", vertical_alignment="center")
+left, right = st.columns([5, 6], gap="large", vertical_alignment="center")
 with left:
     st.markdown('<div class="bm-display">Every close approach. <em>Worst first.</em></div>'
                 f'<p class="bm-lede"><b>{len(shown):,} conjunctions</b> screened at the 2-day decision point. '
@@ -61,12 +62,10 @@ with left:
                 'signs every call.</p>', unsafe_allow_html=True)
 with right:
     if len(shown):
-        components.html(hero.hero_html(hero.hero_figure(shown, history, split=split), height=HERO_HEIGHT),
-                        height=HERO_HEIGHT)
-        # A plain caption under the scene, not an uppercase label (it sat above the KPI row and read like one)
-        st.markdown(f'<p style="margin:-0.6rem 0 0;font-size:0.76rem;line-height:1.4;color:{style.MUTED};'
-                    'text-align:center">Each point is one encounter relative to the primary (RTN frame), distance '
-                    'on a log scale; spheres at 1 km and 5 km. Drag to rotate.</p>', unsafe_allow_html=True)
+        components.html(hero.hero_render(shown, history, split=split), height=HERO_HEIGHT)
+        st.markdown('<p class="bm-caption">Each point is one encounter relative to the primary (RTN frame), '
+                    'distance on a log scale; shells at 1 km and 5 km. Drag to rotate.</p>',
+                    unsafe_allow_html=True)
 
 # ---- KPI row: flat giant numbers; order matters to the tests (Events … Undecided) ----
 with st.container(key="kpis"):
