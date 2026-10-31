@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.error_analysis import analyse, final_outcomes, miss_watch_tradeoff
+from src.error_analysis import analyse, final_outcomes, lockbox_outcomes, miss_watch_tradeoff
 from src.tiering import CRITICAL, ELEVATED, SAFE
 
 THR = 0.03
@@ -93,6 +93,8 @@ def test_empty_and_unknown_object_type():
     r2 = analyse(ev2, final_outcomes(c), THR)
     assert r2["false_alarm"]["by_object_type"] == {"UNKNOWN": 1}
     r3 = analyse(ev.iloc[:0], final_outcomes(c), THR)
+    clash = analyse(ev.assign(tier_true=CRITICAL), final_outcomes(c), THR)   # finals win over ev columns
+    assert clash["n_critical"] == 0
     assert r3["n_events"] == 0
 
 
@@ -108,3 +110,12 @@ def test_miss_watch_tradeoff_counts_only_unissued_and_falls_back_to_latest():
     assert t[2_000.0]["recovered_critical"] == 2 and t[2_000.0]["extra_alerts"] == 1   # 2,000 not < 2,000
     assert t[2_000.0]["alerts_per_recovered"] == 0.5
     assert miss_watch_tradeoff(d.iloc[:0], [1_000.0])[0]["alerts_per_recovered"] is None
+
+
+def test_lockbox_outcomes_reads_true_risk_or_risk():
+    raw = pd.DataFrame({"event_id": [7, 8], "time_to_tca": [0.3, 0.1],
+                        "true_risk": [-3.9, -30.0], "miss_distance": [9_000.0, 999.0]})
+    f = lockbox_outcomes(raw).set_index("event_id")
+    assert f.loc[7, "tier_true"] == CRITICAL and f.loc[8, "tier_true"] == CRITICAL
+    g = lockbox_outcomes(raw.rename(columns={"true_risk": "risk"}))
+    assert list(g["tier_true"]) == list(f["tier_true"])

@@ -1,0 +1,334 @@
+{
+  "n_events": 2167,
+  "n_critical": 193,
+  "alert_threshold": 0.03259009513956107,
+  "confusion_matrix": {
+    "rows_actual_cols_issued": [
+      "SAFE",
+      "ELEVATED",
+      "CRITICAL"
+    ],
+    "counts": [
+      [
+        1426,
+        47,
+        21
+      ],
+      [
+        33,
+        254,
+        193
+      ],
+      [
+        7,
+        6,
+        180
+      ]
+    ]
+  },
+  "recall_critical": 0.9326424870466321,
+  "recall_critical_final_cdm_under_2d": 0.9326424870466321,
+  "n_final_cdm_under_2d": 2167,
+  "silent_missed_critical": 12,
+  "recall_critical_incl_review": 0.9378238341968912,
+  "missed_critical": {
+    "n": 13,
+    "share_of_reference": 0.06735751295336788,
+    "by_cause": {
+      "withheld_for_review": {
+        "n": 1,
+        "flag_n": 1,
+        "meaning": "forecast withheld (stale or single CDM) and sent to an analyst: refused, not silent"
+      },
+      "no_evidence_after_cutoff": {
+        "n": 1,
+        "flag_n": 2,
+        "meaning": "Pc jumped from the -30 floor (no measurable risk) at the decision point"
+      },
+      "late_jump": {
+        "n": 4,
+        "flag_n": 6,
+        "meaning": "Pc rose >= 2 orders of magnitude after the decision point"
+      },
+      "miss_driven": {
+        "n": 6,
+        "flag_n": 12,
+        "meaning": "Critical only because the final miss < 1,000 m; Pc stayed < 1.0\u00d710\u207b\u2074"
+      },
+      "near_threshold": {
+        "n": 0,
+        "flag_n": 8,
+        "meaning": "P(Critical) within 2x below the alert threshold"
+      },
+      "other": {
+        "n": 1,
+        "flag_n": 1,
+        "meaning": "none of the above"
+      }
+    },
+    "by_object_type": {
+      "DEBRIS": 9,
+      "UNKNOWN": 4
+    },
+    "predicted_tier": {
+      "SAFE": 7,
+      "ELEVATED": 6,
+      "CRITICAL": 0
+    },
+    "median_gap_days": 1.9977430324074077
+  },
+  "false_alarm": {
+    "n": 214,
+    "share_of_reference": 0.5431472081218274,
+    "by_cause": {
+      "critical_now": {
+        "n": 27,
+        "flag_n": 27,
+        "meaning": "already Critical at the decision point, then resolved before TCA"
+      },
+      "pc_fell": {
+        "n": 102,
+        "flag_n": 122,
+        "meaning": "Pc fell >= 2 orders of magnitude after the decision point"
+      },
+      "miss_opened": {
+        "n": 0,
+        "flag_n": 25,
+        "meaning": "miss < 1,000 m at the decision point, > 1,000 m at TCA"
+      },
+      "alert_threshold": {
+        "n": 85,
+        "flag_n": 213,
+        "meaning": "raised by P(Critical) above the 95%-recall alert threshold"
+      },
+      "other": {
+        "n": 0,
+        "flag_n": 0,
+        "meaning": "none of the above"
+      }
+    },
+    "by_object_type": {
+      "DEBRIS": 140,
+      "UNKNOWN": 65,
+      "PAYLOAD": 6,
+      "ROCKET BODY": 3
+    },
+    "predicted_tier": {
+      "SAFE": 0,
+      "ELEVATED": 0,
+      "CRITICAL": 214
+    },
+    "median_gap_days": 2.006515896990741
+  },
+  "miss_watch_tradeoff": [
+    {
+      "miss_below_m": 1500.0,
+      "recovered_critical": 1,
+      "extra_alerts": 9,
+      "alerts_per_recovered": 9.0
+    },
+    {
+      "miss_below_m": 2000.0,
+      "recovered_critical": 2,
+      "extra_alerts": 27,
+      "alerts_per_recovered": 13.5
+    },
+    {
+      "miss_below_m": 3000.0,
+      "recovered_critical": 3,
+      "extra_alerts": 93,
+      "alerts_per_recovered": 31.0
+    },
+    {
+      "miss_below_m": 5000.0,
+      "recovered_critical": 5,
+      "extra_alerts": 264,
+      "alerts_per_recovered": 52.8
+    }
+  ],
+  "missed_examples": [
+    {
+      "event_id": 1640,
+      "cause": "late_jump",
+      "risk_decision": -23.01614828100853,
+      "risk_final": -4.116338564846382,
+      "miss_decision_m": 8883.0,
+      "miss_final_m": 117.0,
+      "ttca_decision": 2.282935069444445,
+      "ttca_final": 0.2991111342592593,
+      "p_critical": 0.021894067631220406,
+      "tier_issued": "SAFE"
+    },
+    {
+      "event_id": 641,
+      "cause": "late_jump",
+      "risk_decision": -10.048516769247707,
+      "risk_final": -4.708853238268113,
+      "miss_decision_m": 7111.0,
+      "miss_final_m": 596.0,
+      "ttca_decision": 2.2444972800925926,
+      "ttca_final": 0.11323975694444445,
+      "p_critical": 0.01874465622044417,
+      "tier_issued": "SAFE"
+    },
+    {
+      "event_id": 2086,
+      "cause": "late_jump",
+      "risk_decision": -7.658169943079491,
+      "risk_final": -4.733533104559759,
+      "miss_decision_m": 3027.0,
+      "miss_final_m": 314.0,
+      "ttca_decision": 2.232691793981482,
+      "ttca_final": 0.26110173611111115,
+      "p_critical": 0.021812488943988937,
+      "tier_issued": "ELEVATED"
+    },
+    {
+      "event_id": 117,
+      "cause": "miss_driven",
+      "risk_decision": -5.348818937555311,
+      "risk_final": -4.461803421650545,
+      "miss_decision_m": 2670.0,
+      "miss_final_m": 98.0,
+      "ttca_decision": 2.010027939814815,
+      "ttca_final": 0.12117662037037034,
+      "p_critical": 0.02225124842645686,
+      "tier_issued": "ELEVATED"
+    },
+    {
+      "event_id": 1047,
+      "cause": "miss_driven",
+      "risk_decision": -6.615288257061717,
+      "risk_final": -5.023971159908874,
+      "miss_decision_m": 26974.0,
+      "miss_final_m": 937.0,
+      "ttca_decision": 2.066966967592593,
+      "ttca_final": 0.1241219212962963,
+      "p_critical": 0.020367128379010436,
+      "tier_issued": "SAFE"
+    },
+    {
+      "event_id": 1114,
+      "cause": "miss_driven",
+      "risk_decision": -6.7544873321858505,
+      "risk_final": -11.781727146428551,
+      "miss_decision_m": 8166.0,
+      "miss_final_m": 784.0,
+      "ttca_decision": 2.0487507870370365,
+      "ttca_final": 0.1953366435185185,
+      "p_critical": 0.005190349408366189,
+      "tier_issued": "SAFE"
+    },
+    {
+      "event_id": 93,
+      "cause": "no_evidence_after_cutoff",
+      "risk_decision": -30.0,
+      "risk_final": -4.291749111408622,
+      "miss_decision_m": 15629.0,
+      "miss_final_m": 330.0,
+      "ttca_decision": 2.259133726851852,
+      "ttca_final": 0.2540487037037037,
+      "p_critical": 0.0008004807460831967,
+      "tier_issued": "SAFE"
+    },
+    {
+      "event_id": 801,
+      "cause": "other",
+      "risk_decision": -4.080242219498106,
+      "risk_final": -3.958212681028248,
+      "miss_decision_m": 7681.0,
+      "miss_final_m": 7267.0,
+      "ttca_decision": 2.3058495486111115,
+      "ttca_final": 0.3081065162037037,
+      "p_critical": 0.004194475850894381,
+      "tier_issued": "ELEVATED"
+    },
+    {
+      "event_id": 1460,
+      "cause": "withheld_for_review",
+      "risk_decision": -30.0,
+      "risk_final": -5.882397308309916,
+      "miss_decision_m": 1070.0,
+      "miss_final_m": 660.0,
+      "ttca_decision": 3.0081602083333334,
+      "ttca_final": 0.356618275462963,
+      "p_critical": NaN,
+      "tier_issued": "ELEVATED"
+    }
+  ],
+  "false_alarm_examples": [
+    {
+      "event_id": 258,
+      "cause": "alert_threshold",
+      "risk_decision": -4.040195683491662,
+      "risk_final": -4.180390267248415,
+      "miss_decision_m": 1132.0,
+      "miss_final_m": 1341.0,
+      "ttca_decision": 2.2795309606481484,
+      "ttca_final": 0.3223203935185185,
+      "p_critical": 0.16062013770092518,
+      "tier_issued": "CRITICAL"
+    },
+    {
+      "event_id": 452,
+      "cause": "alert_threshold",
+      "risk_decision": -4.203703259948209,
+      "risk_final": -4.188626102946107,
+      "miss_decision_m": 1429.0,
+      "miss_final_m": 1910.0,
+      "ttca_decision": 2.380740138888889,
+      "ttca_final": -0.014383888888888887,
+      "p_critical": 0.13646097092744114,
+      "tier_issued": "CRITICAL"
+    },
+    {
+      "event_id": 1140,
+      "cause": "critical_now",
+      "risk_decision": -3.5659103615821093,
+      "risk_final": -4.604149623981219,
+      "miss_decision_m": 1183.0,
+      "miss_final_m": 2620.0,
+      "ttca_decision": 2.2229092361111107,
+      "ttca_final": 0.15244452546296294,
+      "p_critical": 0.1550396877305298,
+      "tier_issued": "CRITICAL"
+    },
+    {
+      "event_id": 207,
+      "cause": "critical_now",
+      "risk_decision": -3.9237237445957818,
+      "risk_final": -5.3263341237542985,
+      "miss_decision_m": 162.0,
+      "miss_final_m": 1860.0,
+      "ttca_decision": 2.0618784259259257,
+      "ttca_final": 0.06964315972222224,
+      "p_critical": 0.5251561123453558,
+      "tier_issued": "CRITICAL"
+    },
+    {
+      "event_id": 74,
+      "cause": "pc_fell",
+      "risk_decision": -6.444180316938809,
+      "risk_final": -10.437469231137738,
+      "miss_decision_m": 2344.0,
+      "miss_final_m": 1742.0,
+      "ttca_decision": 2.3702891203703707,
+      "ttca_final": 0.04314842592592593,
+      "p_critical": 0.17391911609892055,
+      "tier_issued": "CRITICAL"
+    },
+    {
+      "event_id": 1620,
+      "cause": "pc_fell",
+      "risk_decision": -6.530619864150075,
+      "risk_final": -10.674689628288938,
+      "miss_decision_m": 2225.0,
+      "miss_final_m": 2499.0,
+      "ttca_decision": 2.3843732060185183,
+      "ttca_final": 0.02770642361111111,
+      "p_critical": 0.23654671264242028,
+      "tier_issued": "CRITICAL"
+    }
+  ],
+  "scope": "lockbox: Kelvins published test labels, frozen model, scoring only"
+}

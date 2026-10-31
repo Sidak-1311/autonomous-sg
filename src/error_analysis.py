@@ -1,6 +1,6 @@
 """Why the triage misses Criticals and raises false alarms.
 
-    .venv/bin/python -m src.error_analysis [--holdout models/holdout_ids.json]
+    .venv/bin/python -m src.error_analysis [--holdout models/holdout_ids.json] [--lockbox]
 
 Reads data/processed/events_scored.parquet + cdms.parquet, takes the true final
 tier from the last train CDM (smallest time_to_tca, the organisers' definition),
@@ -22,6 +22,8 @@ from src.tiering import CRITICAL, ELEVATED, MISS_CRITICAL_M, RISK_CRITICAL, RISK
 ROOT = Path(__file__).resolve().parent.parent
 PROCESSED = ROOT / "data" / "processed"
 OUT = ROOT / "models" / "error_analysis.json"
+LOCKBOX_PATH = ROOT / "data" / "external" / "kelvins" / "test_data_private.csv"
+LOCKBOX_OUT = ROOT / "models" / "error_analysis_lockbox.json"
 
 CUTOFF_DAYS = 2.0
 JUMP_ORDERS = 2.0      # Pc rising by >= 2 orders of magnitude after the decision point
@@ -57,6 +59,18 @@ def final_outcomes(cdms: pd.DataFrame) -> pd.DataFrame:
     })
     out["tier_true"] = tier_array(out["risk_true"], out["miss_true_m"])
     return out
+
+
+def lockbox_outcomes(truth: pd.DataFrame) -> pd.DataFrame:
+    """Same frame as final_outcomes, from the Kelvins published test labels (Zenodo 4463683).
+
+    The raw file names the column 'true_risk'; 'risk' is accepted too. Scoring only: the
+    model is frozen before this is read.
+    """
+    risk_col = "true_risk" if "true_risk" in truth.columns else "risk"
+    t = pd.DataFrame({"split": "train", "event_id": truth["event_id"], "time_to_tca": truth["time_to_tca"],
+                      "risk": truth[risk_col], "miss_distance": truth["miss_distance"]})
+    return final_outcomes(t)
 
 
 def _fn_flags(d: pd.DataFrame, threshold: float) -> pd.DataFrame:
@@ -135,7 +149,8 @@ def miss_watch_tradeoff(d: pd.DataFrame, thresholds=MISS_WATCH_M) -> list:
 
 def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
     """ev: train rows of events_scored; finals: final_outcomes(cdms). Returns the report dict."""
-    d = ev.merge(finals, on="event_id", how="inner")
+    overlap = [c for c in finals.columns if c != "event_id" and c in ev.columns]
+    d = ev.drop(columns=overlap).merge(finals, on="event_id", how="inner")
     cm = pd.crosstab(pd.Categorical(d["tier_true"], TIERS), pd.Categorical(d["tier_final"], TIERS),
                      dropna=False)
     is_crit = d["tier_true"] == CRITICAL
@@ -169,17 +184,26 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--holdout", type=Path, help="JSON list of held-out train event_ids")
-    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--lockbox", action="store_true",
+                    help=f"score the test split against {LOCKBOX_PATH.relative_to(ROOT)} instead")
+    ap.add_argument("--out", type=Path)
     a = ap.parse_args(argv)
     import joblib
     threshold = float(joblib.load(ROOT / "models" / "forecaster.joblib")["crit_threshold"])
     ev = pd.read_parquet(PROCESSED / "events_scored.parquet")
-    ev = ev[ev["split"] == "train"]
-    if a.holdout:
-        ev = ev[ev["event_id"].isin(json.loads(a.holdout.read_text()))]
-    report = analyse(ev, final_outcomes(pd.read_parquet(PROCESSED / "cdms.parquet")), threshold)
-    report["scope"] = f"holdout ({a.holdout.name})" if a.holdout else "all train events (OOF where trained)"
-    a.out.write_text(json.dumps(report, indent=2, default=lambda x: None if x != x else x))
+    if a.lockbox:
+        ev = ev[ev["split"] == "test"]
+        finals, out = lockbox_outcomes(pd.read_csv(LOCKBOX_PATH)), a.out or LOCKBOX_OUT
+        scope = "lockbox: Kelvins published test labels, frozen model, scoring only"
+    else:
+        ev = ev[ev["split"] == "train"]
+        if a.holdout:
+            ev = ev[ev["event_id"].isin(json.loads(a.holdout.read_text()))]
+        finals, out = final_outcomes(pd.read_parquet(PROCESSED / "cdms.parquet")), a.out or OUT
+        scope = f"holdout ({a.holdout.name})" if a.holdout else "all train events (OOF where trained)"
+    report = analyse(ev, finals, threshold)
+    report["scope"] = scope
+    out.write_text(json.dumps(report, indent=2, default=lambda x: None if x != x else x))
     m = report["missed_critical"]
     print(f"{report['n_critical']} Criticals, missed {m['n']} (recall {report['recall_critical']:.3f}); "
           f"{report['silent_missed_critical']} silent (not sent to review); "
@@ -189,7 +213,7 @@ def main(argv=None):
     for t in report["miss_watch_tradeoff"]:
         print(f"  watch miss < {t['miss_below_m']:,.0f} m: +{t['recovered_critical']} Criticals, "
               f"+{t['extra_alerts']} alerts")
-    print("wrote", a.out)
+    print("wrote", out)
 
 
 if __name__ == "__main__":
