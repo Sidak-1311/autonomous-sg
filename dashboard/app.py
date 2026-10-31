@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from dashboard import hero, style  # noqa: E402
-from dashboard.sections import detail, evaluation, fleet, queue, window  # noqa: E402
+from dashboard.sections import cascade, detail, evaluation, fleet, queue, window  # noqa: E402
 from dashboard.sections.common import data_dir, load, processed_dir, read_decisions, stamp  # noqa: E402
 from src.tiering import CRITICAL, SAFE, TIERS, format_miss, format_pc, format_ttca  # noqa: E402
 
@@ -87,12 +87,13 @@ st.markdown(style.marquee([
     f"<b>EVT {r.event_id}</b> · Pc {format_pc(r.risk_latest)} · {format_miss(r.miss_latest_m)} · "
     f"T−{format_ttca(r.time_to_tca)}" for r in worst.itertuples()]), unsafe_allow_html=True)
 
-queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
-    ["01  Operations queue", "02  Event detail", "03  Fleet overview", "04  Next 24 hours", "05  Evaluation"])
+queue_tab, detail_tab, fleet_tab, window_tab, eval_tab, cascade_tab = st.tabs(
+    ["01  Operations queue", "02  Event detail", "03  Fleet overview", "04  Next 24 hours", "05  Evaluation",
+     "06  Debris cascade"])
 
 ctx = SimpleNamespace(events=events, shown=shown, history=history, split=split, queued=queued,
                       decisions=decisions, review=review, counts=counts)
 for tab, section in ((queue_tab, queue), (detail_tab, detail), (fleet_tab, fleet), (window_tab, window),
-                     (eval_tab, evaluation)):
+                     (eval_tab, evaluation), (cascade_tab, cascade)):
     with tab:
         section.render(ctx)

@@ -1,6 +1,7 @@
 """Event detail: a header strip of big numbers, histories and 3D geometry on the left, and on the right the
 maneuver, refusal, analyst decision and Gemini summary."""
 from dashboard.sections.common import *  # noqa: F401,F403  (helpers, st, np, pd, px, go, style, brief)
+from dashboard.sections.cascade import cascade_card
 
 GREYS = [[0, "#F2F2F2"], [1, "#4A4A4A"]]  # time along a path: not a tier, so no tier colour
 NO_TOOLBAR = {"displayModeBar": False}  # it sat on top of the chart titles; zoom still works by drag
@@ -84,6 +85,8 @@ def render(ctx):
                     f"radial shift: an along-track burn of {e.maneuver_dv_mps * 100:.1f} cm/s about "
                     f"{half_orbit:.0f} min (half an orbit) before TCA. A first-order suggestion to verify.",
                     CRITICAL), unsafe_allow_html=True)
+        if card := cascade_card(e):
+            st.markdown(card, unsafe_allow_html=True)
 
         with st.form(f"decide-{split}-{ev}"):
             st.markdown(style.label("Analyst decision · you decide and sign"), unsafe_allow_html=True)
