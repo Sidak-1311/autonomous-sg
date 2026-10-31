@@ -114,6 +114,25 @@ def _examples(d: pd.DataFrame, prim: pd.Series, k: int = 3) -> list:
     return rows
 
 
+MISS_WATCH_M = [1_500.0, 2_000.0, 3_000.0, 5_000.0]
+
+
+def miss_watch_tradeoff(d: pd.DataFrame, thresholds=MISS_WATCH_M) -> list:
+    """Cost of a geometry watch rule: also raise events with forecast miss < thr.
+
+    For each thr: missed Criticals it would recover and extra non-Critical alerts.
+    """
+    is_crit, issued = d["tier_true"] == CRITICAL, d["tier_final"] == CRITICAL
+    miss = d["miss_forecast_m"].fillna(d["miss_latest_m"])
+    out = []
+    for thr in thresholds:
+        raised = (miss < thr) & ~issued
+        caught, extra = int((raised & is_crit).sum()), int((raised & ~is_crit).sum())
+        out.append({"miss_below_m": float(thr), "recovered_critical": caught, "extra_alerts": extra,
+                    "alerts_per_recovered": float(extra / caught) if caught else None})
+    return out
+
+
 def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
     """ev: train rows of events_scored; finals: final_outcomes(cdms). Returns the report dict."""
     d = ev.merge(finals, on="event_id", how="inner")
@@ -141,6 +160,7 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
         "recall_critical_incl_review": float(1 - silent / n_crit) if n_crit else float("nan"),
         "missed_critical": _summary(fn, fn_flags, FN_CAUSES, n_crit),
         "false_alarm": _summary(fp, fp_flags, FP_CAUSES, int((d["tier_final"] == CRITICAL).sum())),
+        "miss_watch_tradeoff": miss_watch_tradeoff(d),
         "missed_examples": _examples(fn, _primary(fn_flags, FN_CAUSES)),
         "false_alarm_examples": _examples(fp, _primary(fp_flags, FP_CAUSES), k=2),
     }
@@ -166,6 +186,9 @@ def main(argv=None):
           f"false alarms {report['false_alarm']['n']}")
     for c, v in m["by_cause"].items():
         print(f"  {c:26s} {v['n']:4d}  (flag on {v['flag_n']})")
+    for t in report["miss_watch_tradeoff"]:
+        print(f"  watch miss < {t['miss_below_m']:,.0f} m: +{t['recovered_critical']} Criticals, "
+              f"+{t['extra_alerts']} alerts")
     print("wrote", a.out)
 
 

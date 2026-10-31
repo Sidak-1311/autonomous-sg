@@ -121,6 +121,32 @@
     },
     "median_gap_days": 1.9798683912037034
   },
+  "miss_watch_tradeoff": [
+    {
+      "miss_below_m": 1500.0,
+      "recovered_critical": 7,
+      "extra_alerts": 82,
+      "alerts_per_recovered": 11.714285714285714
+    },
+    {
+      "miss_below_m": 2000.0,
+      "recovered_critical": 15,
+      "extra_alerts": 218,
+      "alerts_per_recovered": 14.533333333333333
+    },
+    {
+      "miss_below_m": 3000.0,
+      "recovered_critical": 21,
+      "extra_alerts": 588,
+      "alerts_per_recovered": 28.0
+    },
+    {
+      "miss_below_m": 5000.0,
+      "recovered_critical": 24,
+      "extra_alerts": 1373,
+      "alerts_per_recovered": 57.208333333333336
+    }
+  ],
   "missed_examples": [
     {
       "event_id": 4973,

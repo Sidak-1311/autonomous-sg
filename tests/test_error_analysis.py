@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.error_analysis import analyse, final_outcomes
+from src.error_analysis import analyse, final_outcomes, miss_watch_tradeoff
 from src.tiering import CRITICAL, ELEVATED, SAFE
 
 THR = 0.03
@@ -18,6 +18,7 @@ def _ev(rows):
     df = pd.DataFrame(rows, columns=["event_id", "tier_final", "tier_now", "risk_latest",
                                      "miss_latest_m", "p_critical", "needs_review"])
     df["time_to_tca"], df["n_cdms"], df["c_object_type"] = 2.5, 3, "DEBRIS"
+    df["miss_forecast_m"] = df["miss_latest_m"]
     return df
 
 
@@ -93,3 +94,17 @@ def test_empty_and_unknown_object_type():
     assert r2["false_alarm"]["by_object_type"] == {"UNKNOWN": 1}
     r3 = analyse(ev.iloc[:0], final_outcomes(c), THR)
     assert r3["n_events"] == 0
+
+
+def test_miss_watch_tradeoff_counts_only_unissued_and_falls_back_to_latest():
+    d = pd.DataFrame({
+        "tier_true": [CRITICAL, CRITICAL, SAFE, SAFE, CRITICAL],
+        "tier_final": [SAFE, CRITICAL, SAFE, SAFE, ELEVATED],
+        "miss_forecast_m": [1_800.0, 100.0, 1_999.0, 2_000.0, np.nan],
+        "miss_latest_m": [9_000.0, 100.0, 9_000.0, 9_000.0, 1_200.0],
+    })
+    t = {r["miss_below_m"]: r for r in miss_watch_tradeoff(d, [1_500.0, 2_000.0])}
+    assert t[1_500.0]["recovered_critical"] == 1 and t[1_500.0]["extra_alerts"] == 0   # NaN -> latest 1,200
+    assert t[2_000.0]["recovered_critical"] == 2 and t[2_000.0]["extra_alerts"] == 1   # 2,000 not < 2,000
+    assert t[2_000.0]["alerts_per_recovered"] == 0.5
+    assert miss_watch_tradeoff(d.iloc[:0], [1_000.0])[0]["alerts_per_recovered"] is None
