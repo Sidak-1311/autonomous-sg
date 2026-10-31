@@ -46,7 +46,7 @@ def test_hourly_empty_and_out_of_window():
 def test_chart_fades_the_future():
     zeros = pd.Series(0, index=window.HOURS)
     for now, faded in ((0, 24), (6, 18), (24, 0)):
-        fig = window._chart(zeros, zeros, zeros, now, 2.0)
+        fig = window._chart(zeros, zeros, zeros, now)
         assert list(fig.data[0].marker.opacity).count(window.FUTURE_OPACITY) == faded
         assert fig.layout.shapes[-1].x0 == now - 0.5          # the NOW line
 

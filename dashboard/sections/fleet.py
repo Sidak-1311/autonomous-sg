@@ -63,8 +63,11 @@ def _sky(shown: pd.DataFrame, at_tca: bool):
 
 
 def _mix(shown: pd.DataFrame):
-    mix = shown.groupby(["c_object_type", "tier_final"]).size().reset_index(name="events")
-    order = shown.c_object_type.value_counts().index.tolist()[::-1]  # biggest group on top
+    n = shown.c_object_type.value_counts()
+    names = {k: f"{str(k).title()} · {v:,}" for k, v in n.items()}   # 'Debris · 1,226'
+    mix = (shown.assign(c_object_type=shown.c_object_type.map(names))
+           .groupby(["c_object_type", "tier_final"]).size().reset_index(name="events"))
+    order = [names[k] for k in n.index[::-1]]  # biggest group on top
     fig = px.bar(mix, x="events", y="c_object_type", color="tier_final", orientation="h",
                  color_discrete_map=TIER_COLORS, category_orders={"tier_final": TIERS, "c_object_type": order},
                  labels={"c_object_type": "", "tier_final": "tier"})
@@ -88,14 +91,15 @@ def _pc_histogram(shown: pd.DataFrame, y: str, floor: pd.Series):
 
 def _storm(shown: pd.DataFrame):
     flips = shown[shown.storm_flips.astype(bool)]
+    st.write("")
     _md(style.label("Space-weather sensitivity"))
     left, right = st.columns([1, 2.4], gap="large")
     with left:
         _md(stat(f"{len(flips):,}", "Events that flip to Critical", CRITICAL if len(flips) else None))
     with right:
         st.caption(f"{len(flips):,} of {len(shown):,} events change tier if F10 / AP rise to the data's "
-                   "99th percentile (about a minor G1 storm: denser upper atmosphere, more drag uncertainty). "
-                   "A sensitivity check, not a storm forecast: these are the events to re-check if a storm arrives.")
+                   "99th percentile (about a minor G1 storm). A sensitivity check, not a storm forecast: "
+                   "re-check these if a storm arrives.")
     if not len(flips):
         return
     ranked = (flips.assign(jump=flips.p_critical_storm - flips.p_critical,
@@ -158,5 +162,6 @@ def render(ctx):
         _md(style.label("Pc above the floor"))
         _pc_histogram(shown, y, floor)
         st.caption(f"{int(floor.sum()):,} events ({floor.mean() if len(floor) else 0:.0%}) sit at the floor, "
-                   "Pc < 10⁻³⁰, and are left out so the rest stays readable.")
+                   f"Pc < 10⁻³⁰, and are left out so the rest stays readable. Dotted lines: the Elevated "
+                   f"({format_pc(RISK_ELEVATED)}) and Critical ({format_pc(RISK_CRITICAL)}) thresholds.")
     _storm(shown)

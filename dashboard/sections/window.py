@@ -6,7 +6,7 @@ import streamlit as st
 from dashboard import style
 from dashboard.sections.common import DECISION_DAYS
 from dashboard.sections.fleet import stat
-from src.tiering import CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, TIER_COLORS
+from src.tiering import CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, TIER_COLORS, format_ttca
 
 HOURS = np.arange(24)
 FUTURE_OPACITY = 0.25
@@ -31,7 +31,7 @@ def _hourly(shown, start: float):
     return win, inside, near, crit
 
 
-def _chart(inside, near, crit, now: int, start: float) -> go.Figure:
+def _chart(inside, near, crit, now: int) -> go.Figure:
     fade = np.where(HOURS < now, 1.0, FUTURE_OPACITY)
     fig = go.Figure([
         go.Bar(x=HOURS, y=inside, name="Inside 1 km", marker=dict(color=TIER_COLORS[CRITICAL], opacity=fade,
@@ -47,7 +47,7 @@ def _chart(inside, near, crit, now: int, start: float) -> go.Figure:
                        font=dict(color=style.ACCENT, size=10))
     fig.update_layout(
         barmode="stack", bargap=0.25, height=420, margin=dict(l=0, r=0, t=24, b=0),
-        xaxis=dict(title=f"Hours after day {start:.2f} (h)", dtick=2, range=[-0.5, 23.5]),
+        xaxis=dict(title="Hours into the window", dtick=2, range=[-0.5, 23.5]),
         yaxis=dict(title="Objects at closest approach"),
         yaxis2=dict(title="Critical events, cumulative", overlaying="y", side="right", rangemode="tozero",
                     showgrid=False, tickformat=",d", tickmode="auto", nticks=6),
@@ -60,10 +60,12 @@ def render(ctx):
     _md(style.section("04", "Next 24 hours"))
     lo = float(shown.time_to_tca.min()) if len(shown) else DECISION_DAYS
     controls = st.columns(2, gap="large")
-    start = controls[0].slider("Window starts (days after the decision point)", lo, lo + 5, lo, 0.25)
+    start = controls[0].slider("Window starts (days from the decision CDM to TCA)", lo, lo + 5, lo, 0.25,
+                               format="%.2f d")
     now = controls[1].slider("Now (hours into the window)", 0, 24, 24)
     win, inside, near, crit = _hourly(shown, start)
-    _md(f'<p class="bm-lede"><b>{len(win):,}</b> encounters reach closest approach in this 24-hour window; '
+    _md(f'<p class="bm-lede"><b>{len(win):,}</b> encounters reach closest approach between '
+        f'<b>{format_ttca(start)}</b> and <b>{format_ttca(start + 1)}</b> after their decision CDM; '
         f'<b>{int(inside.sum()):,}</b> come inside 1 km.</p>')
 
     stats = st.columns(3, gap="large")
@@ -73,11 +75,14 @@ def render(ctx):
             (stats[2], int(crit.iloc[now - 1]) if now else 0, "Critical events so far", CRITICAL, None)):
         with col:
             _md(stat(f"{value:,}", caption, tier if value else None))
-            if to_come is not None:
+            if to_come:
                 _md(style.label(f"+{to_come:,} still to come"))
 
     st.write("")
     _md(style.label("Objects reaching closest approach, hour by hour"))
-    st.plotly_chart(_chart(inside, near, crit, now, start), width="stretch", config={"displayModeBar": False})
-    st.caption(f"Miss distance at TCA: {int(win.real.sum()):,} measured, {int((~win.real).sum()):,} predicted "
-               "by the forecaster (outcome unknown). Faded hours are still to come.")
+    st.plotly_chart(_chart(inside, near, crit, now), width="stretch", config={"displayModeBar": False})
+    measured, predicted = int(win.real.sum()), int((~win.real).sum())
+    source = ("predicted by the forecaster (outcome unknown)" if not measured else
+              "measured" if not predicted else
+              f"{measured:,} measured, {predicted:,} predicted by the forecaster (outcome unknown)")
+    st.caption(f"Miss distance at TCA: {source}. Faded hours are still to come.")
