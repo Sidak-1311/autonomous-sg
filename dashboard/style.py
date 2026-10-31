@@ -50,6 +50,10 @@ h1 {{ font-size: clamp(3rem, 7vw, 6.5rem) !important; font-weight: 800 !importan
 .bm-hero {{ display: flex; flex-direction: column; gap: 0.35rem; }}
 .bm-hero .num {{ font: 800 clamp(3.2rem, 7.5vw, 7.2rem) {FONT}; letter-spacing: -0.07em; line-height: 0.82; }}
 
+/* row-sized giant numbers (rows of 3-6); from the Fleet section's tested sizes */
+.stat-row .bm-hero {{ gap: 0.75rem; }}
+.stat-row .bm-hero .num {{ font-size: clamp(2.4rem, 4.6vw, 4.8rem); white-space: nowrap; line-height: 0.9; }}
+
 /* surfaces */
 .bm-card {{ background: {SURFACE}; border-radius: 20px; padding: 1.4rem 1.5rem; }}
 [data-testid="stMetric"] {{ background: {SURFACE}; border-radius: 20px; padding: 1.1rem 1.3rem; }}
@@ -99,8 +103,10 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
 /* KPI row: big flat numbers on hairlines instead of boxed metrics */
 .st-key-kpis [data-testid="stMetric"] {{ background: transparent; border-radius: 0; padding: 0.9rem 0 0;
   border-top: 1px solid {LINE}; }}
-.st-key-kpis [data-testid="stMetricValue"] {{ font-size: clamp(2.4rem, 4.2vw, 4.4rem); line-height: 0.95;
-  letter-spacing: -0.06em; }}
+.st-key-kpis [data-testid="stMetricValue"] {{ font-size: clamp(2rem, 3.6vw, 4.2rem); line-height: 0.95;
+  letter-spacing: -0.06em; white-space: nowrap; }}
+.st-key-kpis [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap; }}
+.st-key-kpis [data-testid="stColumn"] {{ min-width: 0; }}
 .st-key-kpis-queue-depth [data-testid="stMetric"] {{ background: transparent; padding: 0.9rem 0 0;
   border-top: 1px solid {LINE}; border-radius: 0; }}
 .st-key-kpis-queue-depth [data-testid="stMetricValue"] {{ font-size: clamp(4rem, 9vw, 9rem); line-height: 0.85;
@@ -121,11 +127,13 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
 @media (prefers-reduced-motion: reduce) {{ .bm-marquee .track {{ animation: none; }} }}
 
 /* filter chips stay neutral: the yellow accent never marks data */
-[data-baseweb="tag"] {{ background: {LINE} !important; border-radius: 999px !important; }}
-[data-baseweb="tag"] span {{ color: {TEXT} !important; font: 600 0.7rem {FONT}; letter-spacing: 0.06em; }}
+[data-testid="stMultiSelectTagsContainer"] > span > span {{ background-color: {LINE} !important;
+  border-radius: 999px !important; }}
+[data-testid="stMultiSelectTagsContainer"] > span > span * {{ color: {TEXT} !important; fill: {TEXT} !important;
+  font-weight: 600; letter-spacing: 0.04em; }}
 .stTabs [data-baseweb="tab"] p {{ font: 600 0.78rem {FONT} !important; letter-spacing: 0.08em;
   text-transform: uppercase; }}
-.st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 2.2rem; }}
+.st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
 
 /* tabs become a sticky top nav */
 .stTabs [data-baseweb="tab-list"] {{ position: sticky; top: 0; z-index: 50; background: {BG};
@@ -168,11 +176,16 @@ def section(index: str, title: str) -> str:
     return f'<div class="bm-section"><span class="idx">{index}</span><span class="ttl">{title}</span></div>'
 
 
-def hero_stat(value: str, caption: str, tier: str | None = None) -> str:
-    """Giant number over an uppercase label; coloured only when it counts a tier."""
+def hero_stat(value: str, caption: str, tier: str | None = None, size: str = "hero") -> str:
+    """Giant number over an uppercase label; coloured only when it counts a tier.
+
+    size='hero' is up to 7rem (one or two per row); size='row' is up to 4.8rem and
+    never wraps, for rows of 3-6 numbers.
+    """
     color = TIER_COLORS[tier] if tier else TEXT
-    return (f'<div class="bm-hero"><span class="num" style="color:{color}">{value}</span>'
+    html = (f'<div class="bm-hero"><span class="num" style="color:{color}">{value}</span>'
             f'{label(caption)}</div>')
+    return f'<div class="stat-row">{html}</div>' if size == "row" else html
 
 
 def card(inner_html: str) -> str:

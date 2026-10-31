@@ -63,3 +63,10 @@ def test_shell_helpers():
     assert style.marquee([]) == ""
     ticker = style.marquee(["EVT 1", "EVT 2"])
     assert ticker.count("EVT 1") == 2  # repeated for a seamless loop
+
+
+def test_hero_stat_row_size_wraps_in_stat_row():
+    row = style.hero_stat("1,466", "Safe", "SAFE", size="row")
+    assert row.startswith('<div class="stat-row">') and ">1,466<" in row
+    assert "stat-row" not in style.hero_stat("394", "Critical")
+    assert ".stat-row .bm-hero .num" in style.CSS and "nowrap" in style.CSS

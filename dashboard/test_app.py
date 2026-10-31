@@ -267,15 +267,15 @@ def test_queue_depth_headline_quotes_its_interval(tmp_path, monkeypatch):
     depth = {"model": 1198, "baseline": 1514, "reduction": 0.209, "ci95": {"reduction": [0.062, 0.373]}}
     at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "queue_depth": depth}), monkeypatch)
     at.sidebar.selectbox[0].set_value("train").run()
-    headline = by_label(at.metric, "Fewer reviews than today's ranking, at 95% recall")
-    assert headline.value == "21%"
-    assert any(c.value.startswith("95% CI 6%–37%") for c in at.caption)
+    text = page_text(at)  # the headline lives in Evaluation as a big-number card
+    assert "Fewer reviews than today's ranking, at 95% recall" in text and ">21%<" in text
+    assert "95% CI 6%–37%" in text
 
 
 def test_no_queue_depth_no_headline(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN}), monkeypatch)
     at.sidebar.selectbox[0].set_value("train").run()
-    assert not any(m.label.startswith("Fewer reviews") for m in at.metric)
+    assert "Fewer reviews" not in page_text(at)
 
 
 def test_event_header_strip(tmp_path, monkeypatch):
