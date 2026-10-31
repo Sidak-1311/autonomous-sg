@@ -43,7 +43,9 @@ decisions = read_decisions()
 latest_decision = (decisions[decisions.split == split].sort_values("at_utc")
                    .groupby("event_id").decision.last())
 shown = shown.assign(decision=shown.event_id.map(latest_decision).fillna(""))
-queued = (shown.tier_final != SAFE) | review  # a refusal is never auto-cleared
+# Queued: non-Safe, every refusal (never auto-cleared), and Watch (P(crit) between the 95%-recall
+# alert threshold and the 15% Critical threshold)
+queued = (shown.tier_final != SAFE) | review | shown.watch.astype(bool)
 
 # ---- top bar: wordmark and the state of the data ----
 scored = processed_dir() / "events_scored.parquet"

@@ -76,6 +76,7 @@ LATER_COLUMNS = {
     "risk_lo": lambda ev: ev.risk_forecast, "risk_hi": lambda ev: ev.risk_forecast_q90,
     "p_critical_storm": lambda ev: np.nan, "storm_flips": lambda ev: False,
     "forecast_in_sample": lambda ev: ev.forecast_source == "model",  # before the flag, train rows were in-sample
+    "watch": lambda ev: False,  # before the 15% Critical threshold there was no Watch status
 }
 
 

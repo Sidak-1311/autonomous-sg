@@ -13,13 +13,15 @@ def render(ctx):
     queue = queue_order(shown[queued])
     n_crit, n_review = int((queue.tier_final == CRITICAL).sum()), int(queue.needs_review.astype(bool).sum())
     n_open = int((queue.decision == "").sum())
+    n_watch = int(queue.watch.astype(bool).sum())
 
     st.markdown(style.heading("01", "Operations queue",
                               "Every event that needs an analyst, worst first: by tier, then by the calibrated "
                               "probability of being Critical at closest approach."), unsafe_allow_html=True)
     st.markdown(style.cells([
-        style.stat(f"{len(queue):,}", "In the queue", sub="non-Safe, plus every refusal"),
-        style.stat(f"{n_crit:,}", "Critical", "CRITICAL", sub="maneuver decision needed"),
+        style.stat(f"{len(queue):,}", "In the queue", sub="non-Safe, Watch and every refusal"),
+        style.stat(f"{n_crit:,}", "Critical", "CRITICAL", sub="rules, or P(Critical) ≥ 15%"),
+        style.stat(f"{n_watch:,}", "Watch", sub="P(Critical) below 15% but above the recall threshold"),
         style.stat(f"{n_review:,}", "Insufficient evidence", sub="no forecast; an analyst decides"),
         style.stat(f"{n_open:,}", "Awaiting a decision", sub="no signed analyst decision yet"),
     ]), unsafe_allow_html=True)
@@ -41,6 +43,7 @@ def render(ctx):
 
 TABLE_ROWS = 300
 DECISIONS = ["Undecided", "Maneuver", "Monitor", "Dismiss"]
+WATCH = "WATCH"
 
 
 def _filter(queue):
@@ -50,7 +53,8 @@ def _filter(queue):
         search = f[0].text_input("Find event", placeholder="Event ID", key="queue_search")
         review_only = f[0].toggle("Review only", key="queue_review",
                                   help="Only events with too little evidence to forecast")
-        tiers = f[1].pills("Tier", [CRITICAL, ELEVATED, SAFE], selection_mode="multi", key="queue_tier")
+        tiers = f[1].pills("Tier", [CRITICAL, WATCH, ELEVATED, SAFE], selection_mode="multi", key="queue_tier",
+                           help="Watch is a status, not a tier: P(Critical) between the recall threshold and 15%")
         decisions = f[2].pills("Decision", DECISIONS, selection_mode="multi", key="queue_decision")
         objects = sorted(queue.c_object_type.dropna().unique())
         picked = f[3].pills("Object", objects, selection_mode="multi", key="queue_object",
@@ -59,7 +63,7 @@ def _filter(queue):
     if search.strip():
         out = out[out.event_id.astype(str).str.contains(search.strip(), regex=False)]
     if tiers:
-        out = out[out.tier_final.isin(tiers)]
+        out = out[out.tier_final.isin(tiers) | (out.watch.astype(bool) & (WATCH in tiers))]
     if decisions:
         out = out[out.decision.replace("", "Undecided").isin(decisions)]
     if picked:
@@ -93,7 +97,8 @@ def _event(v, r) -> str:
 
 TABLE_COLUMNS = [
     ("event_id", "Event", "l", _event),
-    ("tier_final", "Tier", "l", lambda v, r: style.tier_pill(v)),
+    ("tier_final", "Tier", "l",
+     lambda v, r: style.tier_pill(v) + (f' {style.status_pill("watch")}' if r.watch else "")),
     ("p_critical", "P(Critical at TCA)", "l", lambda v, r: style.prob_bar(v)),
     ("risk_latest", "Pc now · 95% bound at TCA", "r",
      lambda v, r: f'{format_pc(v)}<span class="sub">≤ {format_pc(r.risk_hi)} at TCA</span>'),
