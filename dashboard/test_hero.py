@@ -117,3 +117,64 @@ def test_hero_html_orbit_script():
     assert html.index("<style>") < html.index("</head>") and html.rstrip().endswith("</html>")
     assert len(fig.frames) == 6                          # caller's figure untouched
     assert hero.hero_html(hero.hero_figure(pd.DataFrame())).count("Plotly.relayout") == 1   # empty scene
+
+
+# ---- WebGL render (hero_render / render_payload) ------------------------------------------------
+
+def _payload(html):
+    import json
+    start = html.index('type="application/json">') + len('type="application/json">')
+    return json.loads(html[start:html.index("</script>", start)])
+
+
+def test_render_payload_axes_tiers_and_true_values_in_tips():
+    ev = _events([
+        dict(event_id=1, tier_final=CRITICAL, relative_position_t=999.0, miss_latest_m=999.0, p_critical=0.9),
+        dict(event_id=2, tier_final=ELEVATED, relative_position_r=5000.0, miss_latest_m=5000.0),
+        dict(event_id=3, tier_final="BOGUS", relative_position_n=-1000.0, risk_latest=-30.0),
+        dict(event_id=4, split="train", tier_final=CRITICAL, relative_position_t=10.0),   # other split: dropped
+    ])
+    p = hero.render_payload(ev)
+    pts = np.array(p["pts"]).reshape(-1, 3)
+    assert p["tier"] == [2, 1, -1] and len(p["tip"]) == 3
+    assert pts[0, 0] == pytest.approx(hero.radius(999), abs=1e-4)          # along-track -> x
+    assert pts[1, 1] == pytest.approx(hero.radius(5000), abs=1e-4)         # radial -> y (up)
+    assert pts[2, 2] == pytest.approx(-hero.radius(1000), abs=1e-4)        # cross-track -> z
+    assert "999 m" in p["tip"][0] and "90.0%" in p["tip"][0] and "<br>" not in p["tip"][0]
+    assert "10⁻³⁰" in p["tip"][2]                                         # floor, not "1e-30"
+    assert p["shells"] == pytest.approx([hero.radius(1000), hero.radius(5000)])
+    assert p["extent"] >= p["shells"][1] and p["colors"][2] == TIER_COLORS[CRITICAL]
+
+
+def test_render_payload_empty_nan_and_missing_columns():
+    for ev in [_events([]).iloc[:0], pd.DataFrame(), pd.DataFrame({"event_id": [1]}),
+               _events([dict(relative_position_t=np.nan)])]:
+        p = hero.render_payload(ev)
+        assert p["pts"] == [] and p["tier"] == [] and p["paths"] == []
+        assert p["extent"] == pytest.approx(hero.radius(5000))
+
+
+def test_render_paths_only_for_critical_with_two_cdms():
+    ev = _events([dict(event_id=7, tier_final=CRITICAL, relative_position_t=800.0, p_critical=0.99),
+                  dict(event_id=8, tier_final=CRITICAL, relative_position_t=900.0),
+                  dict(event_id=9, tier_final=SAFE, relative_position_t=9000.0)])
+    cdms = pd.DataFrame({"split": "test", "event_id": [7, 7, 7, 8, 9, 9],
+                         "time_to_tca": [5.0, 3.0, 2.1, 4.0, 5.0, 3.0],
+                         "relative_position_t": [3000.0, 1500.0, 800.0, 900.0, 9000.0, 8000.0],
+                         "relative_position_n": 0.0, "relative_position_r": 0.0})
+    paths = hero.render_payload(ev, cdms)["paths"]
+    assert len(paths) == 1 and len(paths[0]) == 9                         # 3 CDMs x (x, y, z)
+    assert paths[0][0] > paths[0][6]                                       # far to near
+    assert hero.render_payload(ev, cdms, n_paths=0)["paths"] == []
+
+
+def test_hero_render_html_is_self_contained_and_safe():
+    ev = _events([dict(event_id=1, tier_final=CRITICAL, relative_position_t=500.0,
+                       c_object_type="</script><script>alert(1)</script>")])
+    html = hero.hero_render(ev, period_s=90)
+    assert hero.THREE_JS in html and "cdnjs.cloudflare.com" in html and "/r128/" in html
+    assert html.count("</script>") == 3                     # payload, three.js, scene: data can't close a tag
+    assert _payload(html)["tier"] == [2]
+    assert "prefers-reduced-motion" in html and "WebGL" in html and "background:transparent" in html
+    assert "const RESUME = 4000, PERIOD = 90.0;" in html and "__" not in html.replace("__proto__", "")
+    assert _payload(hero.hero_render(pd.DataFrame()))["pts"] == []    # empty scene still renders
