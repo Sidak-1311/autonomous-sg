@@ -284,3 +284,15 @@ def test_oof_forecast_swaps_all_three_tier_probabilities():
     out = tr.oof_forecast(fc, ev, oof)
     assert list(out.loc[0, ["p_safe", "p_elevated", "p_critical"]]) == [0.7, 0.2, 0.1]
     assert list(out.loc[1, ["p_safe", "p_elevated", "p_critical"]]) == [0.1, 0.1, 0.8]   # test row untouched
+
+
+def test_both_thresholds_live_in_the_bundle():
+    ev = _events(n=100)
+    bundle, cv = train.train(ev, n_folds=3)
+    fitted = ev[ev["has_target"]]
+    bundle, _ = train.apply_calibration(bundle, cv["oof_table"], *train.calibrate_both(cv["oof_table"], fitted, 3))
+    assert bundle["crit_confirm_threshold"] == train.CRIT_CONFIRM_P == 0.15
+    old = {k: v for k, v in bundle.items() if k != "crit_confirm_threshold"}   # a bundle saved before the rule
+    new = train.set_thresholds(old)
+    assert new["crit_confirm_threshold"] == 0.15 and new["models"] is old["models"]
+    assert "crit_confirm_threshold" not in old                                 # caller's bundle untouched

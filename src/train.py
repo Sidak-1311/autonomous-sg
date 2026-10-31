@@ -45,6 +45,11 @@ log = logging.getLogger(__name__)
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 TARGET_RECALL = 0.95
+# Both P(Critical at TCA) thresholds live here. crit_threshold is learned (the lowest
+# P(crit) that still catches TARGET_RECALL of Criticals out of fold) and starts the
+# Watch band; CRIT_CONFIRM_P is a fixed policy choice (the user's decision) above which
+# a forecast is issued as Critical. score.py reads both from the bundle.
+CRIT_CONFIRM_P = 0.15
 N_FOLDS = 5
 # Reported numbers come from a fixed 80/20 split of train events by event_id
 # (the organisers' protocol); the deployed bundle is then refit on all events.
@@ -397,12 +402,17 @@ def fit_calibration(p_raw, y, groups, n_folds: int = N_FOLDS) -> dict:
     }
 
 
+def set_thresholds(bundle: dict) -> dict:
+    """The bundle with the current fixed Critical threshold (models unchanged)."""
+    return {**bundle, "crit_confirm_threshold": CRIT_CONFIRM_P}
+
+
 def apply_calibration(bundle: dict, oof: pd.DataFrame, cal: dict,
                       cal_elev: dict | None = None) -> tuple[dict, pd.DataFrame]:
     """Bundle and OOF table that output calibrated P(crit) (raw score kept as
     p_critical_raw) and, with cal_elev, the three tier probabilities."""
     bundle = {**bundle, "calibration": cal["map"], "crit_threshold": cal["crit_threshold"],
-              "crit_threshold_raw": cal["crit_threshold_raw"]}
+              "crit_threshold_raw": cal["crit_threshold_raw"], "crit_confirm_threshold": CRIT_CONFIRM_P}
     oof = oof.copy()
     oof["p_critical_raw"] = oof.get("p_critical_raw", oof["p_critical"])
     oof["p_critical"] = cal["p_calibrated"]
@@ -557,6 +567,8 @@ def main():
     ap.add_argument("--out", type=Path, default=MODELS_DIR)
     ap.add_argument("--conformal-only", action="store_true",
                     help="only write conformal.json (seconds, no model training)")
+    ap.add_argument("--set-thresholds", action="store_true",
+                    help="only write CRIT_CONFIRM_P into the saved bundle (no training, no calibration)")
     ap.add_argument("--calibrate-only", action="store_true",
                     help="only (re)fit P(crit) calibration on the saved OOF scores (seconds)")
     ap.add_argument("--holdout-only", action="store_true",
@@ -564,6 +576,11 @@ def main():
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+    if args.set_thresholds:
+        path = args.out / "forecaster.joblib"
+        joblib.dump(set_thresholds(joblib.load(path)), path)
+        log.info("crit_confirm_threshold = %.2f written to %s", CRIT_CONFIRM_P, path)
+        return
     ev = build_event_table(load_all())
     if args.calibrate_only:
         bundle = joblib.load(args.out / "forecaster.joblib")
