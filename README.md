@@ -149,6 +149,12 @@ simpler model stays.
 - **Low alert threshold.** Catching 95% of Criticals needs a calibrated P(crit) ≥ 4.9%, so
   many events are raised at single-digit probabilities. Every such reason states the
   threshold explicitly ("P(crit) 33.4% ≥ alert threshold 4.9%, set for 95% recall").
+- **On balanced scores the baseline wins.** Critical-class F2 (recall weighted 4x precision)
+  is 0.816 vs 0.862 on the holdout, 0.833 vs 0.863 out of fold and 0.766 vs 0.830 on the
+  lockbox, model vs latest-tier baseline. On the lockbox the model issues 396 Criticals to the
+  baseline's ~186 to catch 20 more (179 vs 159): about 10 extra reviews per extra catch
+  (holdout: ~9). The case for the model rests on a missed collision costing more than that,
+  and on the ranking: the queue to 95% recall is 34% shorter.
 - **Misses are geometry closing late.** All 3 Criticals missed on the holdout (43 of 44 out
   of fold) became Critical by geometry alone: the miss distance closed below 1,000 m after
   the 2-day decision point while Pc stayed below 10⁻⁴ (e.g. event 1936: 13,748 m → 657 m,
