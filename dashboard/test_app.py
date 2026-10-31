@@ -325,7 +325,7 @@ def test_out_of_fold_train_rows_are_not_called_in_sample(tmp_path, monkeypatch):
 
 def test_storm_stress_lists_the_flipped_events(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
-    assert any(c.value.startswith("1 of 5 events change tier") for c in at.caption)
+    assert "1 of 5 events change tier" in page_text(at)
     table = next(d.value for d in at.dataframe if "p_critical_storm" in d.value)
     assert list(table.event_id) == [2]
 
@@ -333,7 +333,7 @@ def test_storm_stress_lists_the_flipped_events(tmp_path, monkeypatch):
 def test_pipeline_output_from_before_the_storm_and_conformal_columns(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, drop=("risk_lo", "risk_hi", "p_critical_storm", "storm_flips",
                                                "forecast_in_sample")), monkeypatch)
-    assert any(c.value.startswith("0 of 5 events change tier") for c in at.caption)
+    assert "0 of 5 events change tier" in page_text(at)
     at.sidebar.selectbox[0].set_value("train").run()
     assert any(w.value.startswith("In-sample") for w in at.warning)  # old output: model rows were in-sample
 

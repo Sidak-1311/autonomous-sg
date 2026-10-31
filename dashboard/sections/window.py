@@ -57,32 +57,34 @@ def _chart(inside, near, crit, now: int) -> go.Figure:
 
 def render(ctx):
     shown = ctx.shown
-    _md(style.section("04", "Next 24 hours"))
+    head = st.empty()   # the lede depends on the controls below, the heading still comes first
     lo = float(shown.time_to_tca.min()) if len(shown) else DECISION_DAYS
-    controls = st.columns(2, gap="large")
-    start = controls[0].slider("Window starts (days from the decision CDM to TCA)", lo, lo + 5, lo, 0.25,
-                               format="%.2f d")
-    now = controls[1].slider("Now (hours into the window)", 0, 24, 24)
+    with st.container(key="cells-window-controls"):
+        controls = st.columns(2, gap=None)
+        start = controls[0].slider("Window starts (days from the decision CDM to TCA)", lo, lo + 5, lo, 0.25,
+                                   format="%.2f d")
+        now = controls[1].slider("Now (hours into the window)", 0, 24, 24)
     win, inside, near, crit = _hourly(shown, start)
-    _md(f'<p class="bm-lede"><b>{len(win):,}</b> encounters reach closest approach between '
-        f'<b>{format_ttca(start)}</b> and <b>{format_ttca(start + 1)}</b> after their decision CDM; '
-        f'<b>{int(inside.sum()):,}</b> come inside 1 km.</p>')
+    head.markdown(style.heading(
+        "04", "Next 24 hours",
+        f"<b>{len(win):,}</b> encounters reach closest approach between <b>{format_ttca(start)}</b> and "
+        f"<b>{format_ttca(start + 1)}</b> after their decision CDM; <b>{int(inside.sum()):,}</b> come inside 1 km."),
+        unsafe_allow_html=True)
 
-    stats = st.columns(3, gap="large")
-    for col, value, caption, tier, to_come in (
-            (stats[0], int(inside[:now].sum()), "Inside 1 km so far", CRITICAL, int(inside[now:].sum())),
-            (stats[1], int(near[:now].sum()), "1–5 km so far", ELEVATED, int(near[now:].sum())),
-            (stats[2], int(crit.iloc[now - 1]) if now else 0, "Critical events so far", CRITICAL, None)):
-        with col:
-            _md(stat(f"{value:,}", caption, tier if value else None))
-            if to_come:
-                _md(style.label(f"+{to_come:,} still to come"))
+    stats = []
+    for value, caption, tier, to_come in (
+            (int(inside[:now].sum()), "Inside 1 km so far", CRITICAL, int(inside[now:].sum())),
+            (int(near[:now].sum()), "1–5 km so far", ELEVATED, int(near[now:].sum())),
+            (int(crit.iloc[now - 1]) if now else 0, "Critical events so far", CRITICAL, None)):
+        stats.append(stat(f"{value:,}", caption, tier if value else None,
+                          f"+{to_come:,} still to come" if to_come else ""))
+    _md(style.cells(stats))
 
-    st.write("")
-    _md(style.label("Objects reaching closest approach, hour by hour"))
-    st.plotly_chart(_chart(inside, near, crit, now), width="stretch", config={"displayModeBar": False})
     measured, predicted = int(win.real.sum()), int((~win.real).sum())
     source = ("predicted by the forecaster (outcome unknown)" if not measured else
               "measured" if not predicted else
               f"{measured:,} measured, {predicted:,} predicted by the forecaster (outcome unknown)")
-    st.caption(f"Miss distance at TCA: {source}. Faded hours are still to come.")
+    with st.container(key="cells-window-chart"), st.columns(1)[0]:   # a column gets the cell padding
+        _md(style.cell("Objects reaching closest approach, hour by hour",
+                       f"Miss distance at TCA: {source}. Faded hours are still to come."))
+        st.plotly_chart(_chart(inside, near, crit, now), width="stretch", config={"displayModeBar": False})
