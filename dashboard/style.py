@@ -123,12 +123,13 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
 @keyframes bm-scroll {{ from {{ transform: translateX(0); }} to {{ transform: translateX(-50%); }} }}
 @media (prefers-reduced-motion: reduce) {{ .bm-marquee .track {{ animation: none; }} }}
 
-/* filter chips stay neutral: the yellow accent never marks data. Streamlit 1.58 renders them as
-   span[data-baseweb="tag"] (white on #F2F2F2 by default, i.e. invisible), not inside stMultiSelectTagsContainer */
-span[data-baseweb="tag"] {{ background-color: {LINE} !important; border: 1px solid #3A3A3A !important;
-  border-radius: 999px !important; }}
-span[data-baseweb="tag"] * {{ color: {TEXT} !important; fill: {TEXT} !important;
-  font-weight: 600; letter-spacing: 0.04em; }}
+/* filter chips stay neutral: the yellow accent never marks data. Default is white text on #F2F2F2, i.e.
+   invisible. Streamlit 1.58 renders a chip as span[data-baseweb="tag"]; 1.66 as the inner span of
+   stMultiSelectTagsContainer with no baseweb attribute. Keep both selectors. */
+span[data-baseweb="tag"], [data-testid="stMultiSelectTagsContainer"] > span > span {{
+  background-color: {LINE} !important; border: 1px solid #3A3A3A !important; border-radius: 999px !important; }}
+span[data-baseweb="tag"] *, [data-testid="stMultiSelectTagsContainer"] > span > span * {{
+  color: {TEXT} !important; fill: {TEXT} !important; font-weight: 600; letter-spacing: 0.04em; }}
 .st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
 
 /* ---- styled data tables (html_table) ---- */
