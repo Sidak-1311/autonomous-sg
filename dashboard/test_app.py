@@ -122,7 +122,7 @@ def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None
                       tier_actual=["CRITICAL", "SAFE", "SAFE", "CRITICAL", "SAFE"])
     events = (pd.concat([ev.assign(split="test", tier_actual=None, forecast_in_sample=False), train])
               .drop(columns=list(drop)))
-    (tmp_path / "processed").mkdir()
+    (tmp_path / "processed").mkdir(parents=True)
     events.to_parquet(tmp_path / "processed" / "events_scored.parquet")
     cdms.to_parquet(tmp_path / "processed" / "cdms.parquet")
     if metrics is not None:
@@ -221,6 +221,54 @@ def test_dismissing_a_safe_event_needs_no_reason(tmp_path, monkeypatch):
     by_label(at.selectbox, "Event (worst first)").set_value(2).run()  # SAFE, enough evidence
     sign(at, "Ada", "Dismiss")
     assert pd.read_csv(tmp_path / "decisions.csv").event_id.tolist() == [2]
+
+
+def test_queue_shows_pc_and_distances_not_raw_logs(tmp_path, monkeypatch):
+    q = queue(render(write_pipeline(tmp_path), monkeypatch)).set_index("event_id")
+    assert q.risk_forecast[0] == "1.0×10⁻⁴"  # exactly on the Critical threshold
+    assert q.miss_latest_m[0] == "6,000 m" and q.miss_latest_m[3] == "5,000 m"  # never rounded onto 5 km
+    assert q.risk_forecast[4] == "1.0×10⁻³"
+    q_all = queue(render(write_pipeline(tmp_path / "all", review=(True,) * 5), monkeypatch)).set_index("event_id")
+    assert q_all.risk_forecast[2] == "<10⁻³⁰"  # the floor reads as effectively zero, not -30
+    assert q.time_to_tca[0] == "2 d 02 h"  # 2.1 days
+
+
+def event_charts(at: AppTest) -> list[dict]:
+    specs = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    return [s for s in specs if s["layout"].get("title", {}).get("text", "").endswith("per CDM update")]
+
+
+@pytest.mark.parametrize("event", [0, 2])  # 2 is Pc-diluted: the axis setup once only ran for diluted events
+def test_event_history_counts_down_to_tca(tmp_path, monkeypatch, event):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    by_label(at.selectbox, "Event (worst first)").set_value(event).run()
+    charts = event_charts(at)
+    assert len(charts) == 2
+    for spec in charts:
+        assert spec["layout"]["xaxis"]["autorange"] == "reversed"
+        assert spec["layout"]["xaxis"]["title"]["text"] == "days to TCA"
+    pc = next(s for s in charts if s["layout"]["title"]["text"].startswith("Pc"))["layout"]["yaxis"]
+    assert all(t == "1" or t.startswith("10⁻") for t in pc["ticktext"]) and len(pc["ticktext"]) >= 4
+
+
+def test_floor_events_are_counted_not_plotted(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)  # events 2 and 3 sit at the -30 floor
+    assert any(c.value.startswith("2 events (40%) sit at the floor") for c in at.caption)
+
+
+def test_queue_depth_headline_quotes_its_interval(tmp_path, monkeypatch):
+    depth = {"model": 1198, "baseline": 1514, "reduction": 0.209, "ci95": {"reduction": [0.062, 0.373]}}
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "queue_depth": depth}), monkeypatch)
+    at.sidebar.selectbox[0].set_value("train").run()
+    headline = by_label(at.metric, "Fewer reviews than today's ranking, at 95% recall")
+    assert headline.value == "21%"
+    assert any(c.value.startswith("95% CI 6%–37%") for c in at.caption)
+
+
+def test_no_queue_depth_no_headline(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN}), monkeypatch)
+    at.sidebar.selectbox[0].set_value("train").run()
+    assert not any(m.label.startswith("Fewer reviews") for m in at.metric)
 
 
 def test_out_of_fold_train_rows_are_not_called_in_sample(tmp_path, monkeypatch):

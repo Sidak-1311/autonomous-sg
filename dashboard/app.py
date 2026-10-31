@@ -18,12 +18,12 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from dashboard import brief  # noqa: E402
+from dashboard import brief, style  # noqa: E402
 from src.physics import LEO_MEAN_MOTION, combined_sigma, dilution  # noqa: E402
 from src.score import _add_maneuver, _add_review  # noqa: E402  (the pipeline's own rules, reused by the stub)
 from src.tiering import (  # noqa: E402
     CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, RISK_CRITICAL, RISK_ELEVATED, RISK_FLOOR, SAFE,
-    TIER_COLORS, TIER_RANK, TIERS, rule_fired, tier_array,
+    TIER_COLORS, TIER_RANK, TIERS, format_miss, format_pc, format_prob, format_ttca, rule_fired, tier_array,
 )
 
 DATA = Path(os.environ.get("DATA_DIR", ROOT / "data"))
@@ -149,6 +149,11 @@ def metrics_table(metrics: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("metric")
 
 
+def tier_text(tier) -> str:
+    """Table cell style: the tier word in its tier colour (the word itself stays, so colour is never the only cue)."""
+    return f"color: {TIER_COLORS[tier]}; font-weight: 600" if tier in TIER_COLORS else ""
+
+
 def queue_order(df: pd.DataFrame) -> pd.DataFrame:
     """Worst first: tier, then probability of Critical, then forecast risk."""
     return (df.assign(_rank=df.tier_final.map(TIER_RANK))
@@ -168,8 +173,12 @@ def sphere(radius: float, tier: str, name: str) -> go.Surface:
                       name=name, hoverinfo="name")
 
 
-st.set_page_config(page_title="Collision risk", layout="wide")
-st.title("Satellite collision-risk evaluator")
+st.set_page_config(page_title="Collision risk", page_icon="🛰️", layout="wide")
+style.apply()
+st.markdown('<div class="hero-eyebrow">Conjunction triage · low Earth orbit</div>', unsafe_allow_html=True)
+st.title("Collision-risk evaluator")
+st.markdown('<p class="hero-sub">Every close approach in one queue, worst first. Rules set the tier, a forecaster '
+            'looks ahead to closest approach, and an analyst signs every decision.</p>', unsafe_allow_html=True)
 events, cdms, source = load(str(DATA), stamp())
 
 with st.sidebar:
@@ -190,35 +199,42 @@ latest_decision = (decisions[decisions.split == split].sort_values("at_utc")
 shown = shown.assign(decision=shown.event_id.map(latest_decision).fillna(""))
 queued = (shown.tier_final != SAFE) | review  # a refusal is never auto-cleared
 k = st.columns(6)
-k[5].metric("Awaiting a decision", f"{int((queued & (shown.decision == '')).sum()):,}")
-k[0].metric("Events", f"{len(shown):,}")
+k[5].metric("Undecided", f"{int((queued & (shown.decision == '')).sum()):,}", border=True,
+            help="Queued events without a signed analyst decision.")
+k[0].metric("Events", f"{len(shown):,}", border=True)
 for col, t in zip(k[1:], reversed(TIERS)):
-    col.metric(t.title(), f"{counts.get(t, 0):,}")
-k[4].metric("Needs analyst review", f"{int(review.sum()):,}")
-st.caption(f"{counts.get(CRITICAL, 0):,} events need a maneuver (CRITICAL: Pc ≥ 1e-4 or miss < 1 km at TCA). "
-           f"{int(review.sum()):,} have too little evidence to forecast; they stay in the queue whatever their tier.")
+    col.metric(t.title(), f"{counts.get(t, 0):,}", border=True)
+k[4].metric("Needs review", f"{int(review.sum()):,}", border=True,
+            help="Too little evidence to forecast: an analyst must review these whatever their tier.")
+st.caption(f"{counts.get(CRITICAL, 0):,} events need a maneuver (CRITICAL: Pc ≥ {format_pc(RISK_CRITICAL)} or miss "
+           f"< {format_miss(MISS_CRITICAL_M)} at TCA). {int(review.sum()):,} have too little evidence to forecast; "
+           "they stay in the queue whatever their tier.")
 
 queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
     ["Operations queue", "Event detail", "Fleet overview", "Next 24 hours", "Evaluation"])
 
 with queue_tab:
     queue = queue_order(shown[queued])
-    st.dataframe(queue[["event_id", "tier_final", "decision", "needs_review", "tier_now", "p_critical", "risk_latest", "risk_forecast",
-                        "miss_latest_m", "miss_forecast_m", "risk_hi", "time_to_tca", "c_object_type", "storm_flips", "pc_diluted",
-                        "reason", "drivers"]],
+    pc_text, miss_text = (lambda s: [format_pc(v) for v in s]), (lambda s: [format_miss(v) for v in s])
+    view = queue[["event_id", "tier_final", "decision", "needs_review", "tier_now", "p_critical", "risk_latest",
+                  "risk_forecast", "risk_hi", "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type",
+                  "storm_flips", "pc_diluted", "reason", "drivers"]].assign(
+        risk_latest=pc_text(queue.risk_latest), risk_forecast=pc_text(queue.risk_forecast),
+        risk_hi=pc_text(queue.risk_hi), miss_latest_m=miss_text(queue.miss_latest_m),
+        miss_forecast_m=miss_text(queue.miss_forecast_m), time_to_tca=[format_ttca(v) for v in queue.time_to_tca])
+    st.dataframe(view.style.map(tier_text, subset=["tier_final", "tier_now"]),
                  hide_index=True, width="stretch", column_config={
-                     "p_critical": st.column_config.ProgressColumn("P(critical)", min_value=0, max_value=1),
-                     "risk_latest": st.column_config.NumberColumn("risk now", format="%.2f"),
-                     "risk_forecast": st.column_config.NumberColumn("risk at TCA", format="%.2f"),
-                     "risk_hi": st.column_config.NumberColumn(
-                         "risk at TCA, 90% upper", format="%.2f",
-                         help="Upper end of the conformal 90% interval on the final log10 Pc."),
+                     "event_id": "event", "tier_final": "tier", "tier_now": "tier now", "c_object_type": "object",
+                     "p_critical": st.column_config.ProgressColumn("P(Critical at TCA)", min_value=0, max_value=1,
+                                                                   format="percent"),
+                     "risk_latest": "Pc now", "risk_forecast": "Pc at TCA",
+                     "risk_hi": st.column_config.TextColumn(
+                         "95% upper bound on Pc at TCA",
+                         help="One-sided 95% upper bound from the conformal interval on the final Pc."),
                      "storm_flips": st.column_config.CheckboxColumn(
                          "storm-sensitive", help="Sensitivity, not a forecast: the tier changes if F10/AP rise "
                                                  "to geomagnetic-storm levels."),
-                     "miss_latest_m": st.column_config.NumberColumn("miss now (m)", format="%d"),
-                     "miss_forecast_m": st.column_config.NumberColumn("miss at TCA (m)", format="%d"),
-                     "time_to_tca": st.column_config.NumberColumn("days to TCA", format="%.2f"),
+                     "miss_latest_m": "miss now", "miss_forecast_m": "miss at TCA", "time_to_tca": "time to TCA",
                      "needs_review": st.column_config.CheckboxColumn(
                          "needs review", help="Too little evidence to forecast (one CDM, stale CDM or no "
                                               "covariance): an analyst must look, even if the tier is SAFE."),
@@ -250,6 +266,12 @@ with queue_tab:
         st.caption(f"To catch 95% of the {int((known.tier_actual == CRITICAL).sum()):,} events that really ended "
                    f"Critical: top {mine:,} of {n:,} ({mine / n:.0%}) with this queue, top {base:,} ({base / n:.0%}) "
                    "with the baseline ranking.")
+        if depth := (load_metrics() or {}).get("queue_depth"):
+            lo, hi = depth["ci95"]["reduction"]
+            st.metric("Fewer reviews than today's ranking, at 95% recall", f"{depth['reduction']:.0%}", border=True,
+                      help="All train events, out of fold, paired bootstrap over events (metrics.json).")
+            st.caption(f"95% CI {lo:.0%}–{hi:.0%}: top {depth['model']:,} vs {depth['baseline']:,} events on the full "
+                       "train split, whatever the filters above. The interval is wide; quote it with the number.")
         if in_sample:
             st.warning("In-sample: the model was trained on these events, so the queue's curve is optimistic. "
                        "Use the Evaluation tab's out-of-fold numbers for claims.")
@@ -315,27 +337,29 @@ with detail_tab:
             st.dataframe(signed.drop(columns=["split", "event_id"]), hide_index=True, width="stretch")
 
         a, b = st.columns(2)
-        risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Risk per CDM update")
+        risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Pc per CDM update")
         tier_bands(risk, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
-        miss = px.line(path, x="time_to_tca", y="miss_distance", markers=True, log_y=True,
-                       title="Miss distance per CDM update")
+        miss = style.miss_axis(px.line(path, x="time_to_tca", y="miss_distance", markers=True,
+                                       title="Miss distance per CDM update"), "y")
         tier_bands(miss, "y", (1, MISS_CRITICAL_M), (MISS_CRITICAL_M, MISS_ELEVATED_M))
-        if forecast:
+        if forecast:  # the whisker is the one-sided 95% upper bound; the lower end is not shown (uninformative)
             risk.add_trace(go.Scatter(x=[0], y=[e.risk_forecast], mode="markers", marker_symbol="diamond",
-                                      name="forecast, 90% interval",
+                                      name="forecast, 95% upper bound",
                                       error_y=dict(type="data", symmetric=False, array=[e.risk_hi - e.risk_forecast],
-                                                   arrayminus=[e.risk_forecast - e.risk_lo])))
+                                                   arrayminus=[0])))
             miss.add_trace(go.Scatter(x=[0], y=[e.miss_forecast_m], mode="markers", marker_symbol="diamond",
                                       name="forecast"))
         for fig, final in ((risk, e.risk_final), (miss, e.miss_final_m)):
             if pd.notna(final):
                 fig.add_trace(go.Scatter(x=[0], y=[final], mode="markers", marker_symbol="x", name="actual at TCA"))
             fig.add_vline(x=DECISION_DAYS, line_dash="dot", annotation_text="decision point")
+            fig.update_xaxes(autorange="reversed", title="days to TCA")
         if e.pc_diluted:
             risk.add_trace(go.Scatter(x=[e.time_to_tca] * 2, y=[e.risk_latest, e.risk_potential], mode="lines+markers",
                                       line_dash="dot", name="if tracking were sharp (σ = d/√2)"))
-            fig.update_xaxes(autorange="reversed", title="days to TCA")
-            fig.update_layout(legend=dict(orientation="h", y=-0.25))
+        shown_pc = [*path.risk, e.risk_forecast, e.risk_hi, e.risk_final, e.risk_potential]
+        lo = int(np.floor(np.nanmin(shown_pc))) if len(path) else int(RISK_FLOOR)
+        style.pc_axis(risk, lo=lo, step=max(1, int(np.ceil(-lo / 8))))  # ~8 ticks, whatever the range
         a.plotly_chart(risk, width="stretch")
         b.plotly_chart(miss, width="stretch")
 
@@ -354,26 +378,50 @@ with detail_tab:
         st.plotly_chart(geo, width="stretch")
 
 with fleet_tab:
+    st.subheader("Where every event sits")
     at_tca = st.radio("Position events by", ["forecast at TCA", "latest CDM"], horizontal=True) == "forecast at TCA"
     x, y = ("miss_forecast_m", "risk_forecast") if at_tca else ("miss_latest_m", "risk_latest")
-    scatter = px.scatter(shown, x=x, y=y, color="tier_final", color_discrete_map=TIER_COLORS,
-                         category_orders={"tier_final": TIERS}, log_x=True, opacity=0.7,
-                         hover_data=["event_id", "c_object_type", "p_critical", "reason"],
-                         labels={x: "Miss distance (m, log)", y: "Risk, log10(Pc)", "tier_final": "tier"})
+    sky = shown.assign(Pc=[format_pc(v) for v in shown[y]], miss=[format_miss(v) for v in shown[x]],
+                       p_crit=[format_prob(v) for v in shown.p_critical])
+    scatter = px.scatter(sky, x=x, y=y, color="tier_final", color_discrete_map=TIER_COLORS,
+                         category_orders={"tier_final": TIERS}, hover_name="event_id",
+                         hover_data={x: False, y: False, "tier_final": True, "Pc": True, "miss": True,
+                                     "p_crit": True, "c_object_type": True},
+                         labels={"tier_final": "tier", "p_crit": "P(Critical at TCA)", "c_object_type": "object"})
+    scatter.update_traces(marker=dict(size=6, opacity=0.7, line_width=0))
     tier_bands(scatter, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
     tier_bands(scatter, "x", (1, MISS_CRITICAL_M), (MISS_CRITICAL_M, MISS_ELEVATED_M))
+    scatter.add_annotation(x=1, xref="paper", xanchor="right", y=RISK_FLOOR, yanchor="bottom", showarrow=False,
+                           text="floor: Pc < 10⁻³⁰ (effectively zero)", font=dict(color=style.MUTED, size=11))
+    style.miss_axis(style.pc_axis(scatter)).update_layout(height=520)
     st.plotly_chart(scatter, width="stretch")
-    st.caption("Shaded: the tier regions (Critical: risk ≥ -4 or miss < 1 km; Elevated: risk ≥ -6 or miss ≤ 5 km). "
-               "Colour is the final tier, which can also come from the model's P(critical).")
+    st.caption(f"Shaded: the tier regions (Critical: Pc ≥ {format_pc(RISK_CRITICAL)} or miss < "
+               f"{format_miss(MISS_CRITICAL_M)}; Elevated: Pc ≥ {format_pc(RISK_ELEVATED)} or miss ≤ "
+               f"{format_miss(MISS_ELEVATED_M)}). Colour is the final tier, which can also come from the forecaster.")
+
     left, right = st.columns(2)
-    left.plotly_chart(px.histogram(shown, x="c_object_type", color="tier_final", color_discrete_map=TIER_COLORS,
-                                   category_orders={"tier_final": TIERS}, title="Tier by object type",
-                                   labels={"c_object_type": "object type", "tier_final": "tier"}), width="stretch")
-    hist = px.histogram(shown, x=y, color="tier_final", color_discrete_map=TIER_COLORS, nbins=60,
-                        category_orders={"tier_final": TIERS}, title="Risk scores",
-                        labels={y: "Risk, log10(Pc)", "tier_final": "tier"})
-    hist.add_annotation(x=RISK_FLOOR, y=0, yanchor="bottom", text="floor: Pc ≈ 0", showarrow=False)
-    right.plotly_chart(hist, width="stretch")
+    with left, st.container(border=True):
+        mix = shown.groupby(["c_object_type", "tier_final"]).size().reset_index(name="events")
+        order = shown.c_object_type.value_counts().index.tolist()[::-1]  # biggest group on top
+        bars = px.bar(mix, x="events", y="c_object_type", color="tier_final", orientation="h",
+                      color_discrete_map=TIER_COLORS, category_orders={"tier_final": TIERS, "c_object_type": order},
+                      title="Tier mix by object type", labels={"c_object_type": "", "tier_final": "tier"})
+        bars.update_layout(barnorm="percent", showlegend=False, height=340, xaxis_title="share of events (%)")
+        st.plotly_chart(bars, width="stretch")
+    with right, st.container(border=True):
+        floor = shown[y] <= RISK_FLOOR
+        above = shown[~floor]
+        hist = px.histogram(above, x=y, color="tier_final", color_discrete_map=TIER_COLORS, nbins=40,
+                            category_orders={"tier_final": TIERS}, title="Pc above the floor",
+                            labels={"tier_final": "tier"})
+        for v in (RISK_ELEVATED, RISK_CRITICAL):
+            hist.add_vline(x=v, line_dash="dot", line_color=style.MUTED)
+        lo = int(np.floor(above[y].min())) if len(above) else int(RISK_FLOOR)
+        style.pc_axis(hist, "x", lo=lo - lo % 4, step=4).update_layout(showlegend=False, height=340,
+                                                                       yaxis_title="events", bargap=0.05)
+        st.plotly_chart(hist, width="stretch")
+        st.caption(f"{int(floor.sum()):,} events ({floor.mean() if len(floor) else 0:.0%}) sit at the floor, "
+                   "Pc < 10⁻³⁰, and are left out so the rest stays readable.")
 
     st.subheader("Space-weather sensitivity")
     flips = shown[shown.storm_flips.astype(bool)]
@@ -381,13 +429,21 @@ with fleet_tab:
                "(denser upper atmosphere, more drag uncertainty). A sensitivity check, not a storm forecast: "
                "these are the events to re-check if a storm arrives.")
     if len(flips):
-        st.dataframe(flips.assign(jump=flips.p_critical_storm - flips.p_critical)
-                     .sort_values("jump", ascending=False)
-                     [["event_id", "tier_final", "p_critical", "p_critical_storm", "miss_latest_m", "c_object_type"]],
-                     hide_index=True, width="stretch", column_config={
-                         "p_critical": st.column_config.ProgressColumn("P(critical) now", min_value=0, max_value=1),
-                         "p_critical_storm": st.column_config.ProgressColumn("P(critical) in a storm",
-                                                                             min_value=0, max_value=1)})
+        ranked_flips = (flips.assign(jump=flips.p_critical_storm - flips.p_critical,
+                                     miss=[format_miss(v) for v in flips.miss_latest_m])
+                        .sort_values("jump", ascending=False)
+                        [["event_id", "tier_final", "p_critical", "p_critical_storm", "miss", "c_object_type"]])
+        storm_cols = {"event_id": "event", "tier_final": "tier", "miss": "miss now", "c_object_type": "object",
+                      "p_critical": st.column_config.ProgressColumn("P(Critical) now", min_value=0, max_value=1,
+                                                                    format="percent"),
+                      "p_critical_storm": st.column_config.ProgressColumn("P(Critical) in a storm", min_value=0,
+                                                                          max_value=1, format="percent")}
+        st.dataframe(ranked_flips.head(10).style.map(tier_text, subset=["tier_final"]), hide_index=True,
+                     width="stretch", column_config=storm_cols)
+        if len(ranked_flips) > 10:
+            with st.expander(f"All {len(ranked_flips):,} storm-sensitive events"):
+                st.dataframe(ranked_flips.style.map(tier_text, subset=["tier_final"]), hide_index=True,
+                             width="stretch", column_config=storm_cols)
 
 with eval_tab:
     st.subheader("Baseline vs model (cross-validated on train events)")
