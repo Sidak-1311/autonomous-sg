@@ -1,4 +1,5 @@
 """Verification loop for the Evaluation section's honesty guards and error analysis: run `pytest dashboard -q`."""
+import pytest
 import json
 
 from dashboard.sections import evaluation
@@ -100,7 +101,7 @@ def test_holdout_block_needs_both_matrices(tmp_path, monkeypatch):
 
 def test_wilson_interval_edges():
     lo, hi = evaluation._wilson(154, 154)
-    assert hi == 1.0 and 0.97 < lo < 0.98                       # all caught: not a zero-width interval
+    assert hi == pytest.approx(1.0) and 0.97 < lo < 0.98                       # all caught: not a zero-width interval
     assert evaluation._wilson(0, 0) is None and evaluation._wilson(0, 10)[0] == 0.0
 
 
