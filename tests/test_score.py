@@ -140,3 +140,28 @@ def test_no_trend_rate_through_the_floor_placeholder():
     ev = _score([_cdm(1, 4.0, -8.0, 9_000), _cdm(1, 3.0, -30.0, 9_000), _cdm(1, 2.2, -30.0, 9_000)])
     reason = ev.loc[1, "reason"]
     assert "orders of magnitude per day" not in reason and "−30 placeholder" in reason
+
+
+def test_recall_reach_counts_watch_and_refusals():
+    r = score_mod.recall_reach(["CRITICAL"] * 4 + ["SAFE"], ["CRITICAL", "SAFE", "SAFE", "SAFE", "SAFE"],
+                               [False, True, False, False, False], [False, False, True, False, False])
+    assert r == 0.75                                  # one Critical missed silently
+    assert score_mod.recall_reach(["SAFE"], ["SAFE"], [False], [False]) is None
+
+
+def test_holdout_reapplies_the_critical_and_watch_rule(tmp_path):
+    path = tmp_path / "holdout_predictions.parquet"
+    pd.DataFrame({"event_id": [1, 2, 3], "tier_actual": ["CRITICAL", "CRITICAL", "SAFE"],
+                  "tier_now": ["SAFE", "SAFE", "SAFE"], "tier_final": ["CRITICAL", "CRITICAL", "CRITICAL"],
+                  "risk_forecast_q90": [-30.0, -30.0, -30.0], "miss_forecast_m": [9e3, 9e3, 9e3],
+                  "p_critical": [0.40, 0.10, 0.08], "final_ttca": [0.5, 0.5, 0.5]}).to_parquet(path)
+    m = score_mod.holdout_metrics(path, confirm=0.15, threshold=0.05)["holdout"]
+    assert m["model"]["recall"]["CRITICAL"] == 0.5    # only P(crit) 40% is issued Critical
+    assert m["n_watch"] == 2 and m["model"]["recall_reach"] == 1.0
+    assert m["model"]["precision"]["CRITICAL"] == 1.0  # the 8% Safe event is Watch, not a false Critical
+
+
+def test_watch_band_in_scoring():
+    ev = pd.DataFrame({"tier_final": ["SAFE"], "needs_review": [False], "p_critical": [0.1]})
+    watch = (ev.tier_final != "CRITICAL") & ~ev.needs_review & (ev.p_critical >= 0.05) & (ev.p_critical < 0.15)
+    assert watch.iloc[0]

@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = ROOT / "models"
 LOCKBOX_PATH = ROOT / "data" / "external" / "kelvins" / "test_data_private.csv"
+CRIT_CONFIRM_DEFAULT = 0.15  # P(crit) at which a forecast is issued as Critical (user decision)
 MODEL_PATH = MODELS_DIR / "forecaster.joblib"
 CONFORMAL_PATH = MODELS_DIR / "conformal.json"
 OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
@@ -43,7 +44,7 @@ EVENT_COLS = [
     "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
     "needs_review", "review_reason",
     "risk_lo", "risk_hi", "forecast_in_sample", "p_critical_storm", "storm_flips",
-    "p_safe", "p_elevated", "final_ttca", "hard_subset", "tier_true", "risk_true", "miss_true",
+    "p_safe", "p_elevated", "final_ttca", "hard_subset", "tier_true", "risk_true", "miss_true", "watch",
 ] + CASCADE_COLUMNS + CASCADE_OUT + CATALOG_COLUMNS
 
 
@@ -86,7 +87,7 @@ def model_forecast(ev: pd.DataFrame, calib: dict | None):
         fc["forecast_in_sample"] = fitted_on.to_numpy()
     levels = (calib or {}).get("storm_levels")
     fc = fc.join(train.storm_stress(bundle, ev, levels))
-    return fc, bundle.get("crit_threshold", 0.5)
+    return fc, (bundle.get("crit_threshold", 0.5), bundle.get("crit_confirm_threshold", CRIT_CONFIRM_DEFAULT))
 
 
 def _withhold(ev: pd.DataFrame, mask: pd.Series) -> None:
@@ -101,17 +102,20 @@ def _withhold(ev: pd.DataFrame, mask: pd.Series) -> None:
     ev.loc[mask, "forecast_source"] = "withheld"
 
 
-def _reason(row, threshold: float) -> str:
+def _reason(row, threshold: float, confirm: float) -> str:
     now = row.tier_now.capitalize()
     fc = row.tier_forecast.capitalize()
     text = f"{now} now ({rule_fired(row.risk_latest, row.miss_latest_m)})"
     if row.forecast_source == "model":
         text += f"; forecast {fc} (q90 Pc {format_pc(row.risk_forecast_q90)}, " \
                 f"miss {format_miss(row.miss_forecast_m)}, P(crit) {format_prob(row.p_critical)}"
-        if row.p_critical >= threshold:
-            # The threshold is set low on purpose to catch 95% of Critical events
-            text += f" ≥ alert threshold {format_prob(threshold)}, set for 95% recall"
+        if row.p_critical >= confirm:
+            text += f" ≥ Critical threshold {format_prob(confirm)}"
         text += ")"
+        if row.watch:
+            # Below the Critical threshold but above the 95%-recall alert threshold: an analyst looks
+            text += (f"; Watch: P(crit) {format_prob(row.p_critical)} between the {format_prob(threshold)} "
+                     f"recall threshold and the {format_prob(confirm)} Critical threshold")
     if pd.notna(row.risk_hi):
         # risk_hi is the top of an equal-tailed 90% split-conformal interval, so
         # 5% of outcomes fall above it: a one-sided 95% upper bound. The lower end
@@ -177,11 +181,11 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     calib = _load_calib()
     out = model_forecast(ev, calib)
     if out is None:
-        fc, threshold, source = baseline_forecast(ev), 0.5, "baseline"
+        fc, (threshold, confirm), source = baseline_forecast(ev), (0.5, 0.5), "baseline"
         fc["forecast_in_sample"] = False
         fc["p_critical_storm"], fc["storm_flips"] = np.nan, False
     else:
-        (fc, threshold), source = out, "model"
+        (fc, (threshold, confirm)), source = out, "model"
     ev = ev.join(fc)
     ev["forecast_source"] = source
     if calib is not None:
@@ -193,10 +197,15 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     _add_review(ev)
     _withhold(ev, ev["needs_review"])
 
+    # Critical = the rules now, or the forecast state, or P(crit) >= the Critical threshold (15%).
+    # Watch = not Critical, enough evidence, and P(crit) between the 95%-recall alert threshold
+    # and 15%: an analyst looks, but it isn't issued as Critical (no maneuver plan).
     ev["tier_forecast"] = tier_array(ev["risk_forecast_q90"], ev["miss_forecast_m"])
-    ev.loc[ev["p_critical"] >= threshold, "tier_forecast"] = CRITICAL
+    ev.loc[ev["p_critical"] >= confirm, "tier_forecast"] = CRITICAL
     ev["tier_final"] = [worse(a, b) for a, b in zip(ev["tier_now"], ev["tier_forecast"])]
-    ev["reason"] = [_reason(r, threshold) for r in ev.itertuples()]
+    ev["watch"] = ((ev["tier_final"] != CRITICAL) & ~ev["needs_review"].astype(bool)
+                   & (ev["p_critical"] >= threshold) & (ev["p_critical"] < confirm))
+    ev["reason"] = [_reason(r, threshold, confirm) for r in ev.itertuples()]
     _add_maneuver(ev)
     _add_dilution(ev)
     ev.loc[ev["pc_diluted"], "reason"] += (
@@ -243,7 +252,13 @@ def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:
         # As deployed: train rows carry out-of-fold forecasts, and refused events keep tier_now
         results["model"] = {**evaluate(known["risk_final"], known["miss_final_m"],
                                        known["risk_forecast"], known["tier_final"]),
-                            "note": "as deployed: out of fold, forecasts withheld on needs_review events"}
+                            "recall_reach": recall_reach(known["tier_actual"], known["tier_final"],
+                                                         known["watch"], known["needs_review"]),
+                            "n_watch": int(known["watch"].sum()),
+                            "note": "as deployed: out of fold, forecasts withheld on needs_review events; "
+                                    "recall_reach = Criticals issued Critical, on Watch, or refused"}
+        results["baseline"]["recall_reach"] = recall_reach(known["tier_actual"], known["tier_now"], False,
+                                                           known["needs_review"])
         if cv_path.exists():
             results["model_all_events"] = {**json.loads(cv_path.read_text()),
                                            "note": "out of fold, model tier applied to every event "
@@ -290,38 +305,69 @@ def lockbox_metrics(ev: pd.DataFrame) -> dict:
     below -6 are clipped to -6.001, as in the Kelvins competition's scoring."""
     from src.metrics import confusion, evaluate
     t = ev[ev["tier_true"].notna()]
+    t = t.assign(needs_review=t.get("needs_review", False), watch=t.get("watch", False))
     clip = lambda r: np.where(r < -6, -6.001, r)  # noqa: E731
     return {
         "n": int(len(t)),
         "note": "lockbox: published test labels, scored once on the frozen model; never used to train or tune",
         "baseline": {**evaluate(t["risk_true"], t["miss_true"], clip(t["risk_latest"]), t["tier_now"]),
-                     "confusion": confusion(t["tier_true"], t["tier_now"])},
+                     "confusion": confusion(t["tier_true"], t["tier_now"]),
+                     "recall_reach": recall_reach(t["tier_true"], t["tier_now"], False, t["needs_review"])},
         "model": {**evaluate(t["risk_true"], t["miss_true"], clip(t["risk_forecast"]), t["tier_final"]),
-                  "confusion": confusion(t["tier_true"], t["tier_final"])},
+                  "confusion": confusion(t["tier_true"], t["tier_final"]),
+                  "recall_reach": recall_reach(t["tier_true"], t["tier_final"], t["watch"], t["needs_review"]),
+                  "n_watch": int(t["watch"].sum())},
     }
 
 
-def holdout_metrics(path: Path = HOLDOUT_PATH, review_ids: set | None = None) -> dict:
+def recall_reach(tier_actual, issued, watch, review) -> float | None:
+    """Share of actual Criticals that reach an analyst: issued Critical, on Watch, or refused."""
+    crit = np.asarray(tier_actual, dtype=object) == CRITICAL
+    reached = (np.asarray(issued, dtype=object) == CRITICAL) | np.asarray(watch, bool) | np.asarray(review, bool)
+    return float(reached[crit].mean()) if crit.any() else None
+
+
+def holdout_metrics(path: Path = HOLDOUT_PATH, review_ids: set | None = None,
+                    confirm: float = CRIT_CONFIRM_DEFAULT, threshold: float | None = None) -> dict:
     """Confusion matrices on the fixed 80/20 event_id holdout (train.py writes the predictions).
 
-    'holdout' covers every held-out event. 'holdout_forecast_only' keeps events whose final CDM
-    is less than 2 days out: for the rest the final tier is already known at the decision point
-    (tier_actual == tier_now trivially), which inflates every score.
+    The issuing rule is re-applied here from the stored forecasts, so the holdout is scored with
+    the same rule as the queue: Critical = rules now, forecast state, or P(crit) >= `confirm`;
+    Watch = otherwise above the holdout model's 95%-recall `threshold`; refused (needs_review)
+    events keep tier_now. 'holdout_forecast_only' keeps events whose final CDM is < 2 d out: for
+    the rest the final tier is already known at the decision point, which inflates every score.
     """
     if not path.exists():
         return {}
     from src.metrics import confusion
     hold = pd.read_parquet(path)
     hold = hold[hold["tier_actual"].notna()]
-    # As deployed: on refused (needs_review) events no forecast is issued, so the tier is tier_now
+    if threshold is None:
+        meta = path.with_name("holdout_metrics.json")
+        threshold = json.loads(meta.read_text()).get("crit_threshold", 0.0) if meta.exists() else 0.0
     refused = hold["event_id"].isin(review_ids or set())
-    hold = hold.assign(tier_issued=hold["tier_final"].where(~refused, hold["tier_now"]))
+    if {"risk_forecast_q90", "miss_forecast_m", "p_critical"} <= set(hold.columns):
+        fc = tier_array(hold["risk_forecast_q90"], hold["miss_forecast_m"])
+        fc[hold["p_critical"].to_numpy() >= confirm] = CRITICAL
+        rule = np.array([worse(a, b) for a, b in zip(hold["tier_now"], fc)], dtype=object)
+    else:  # older predictions file: its stored tier (the 95%-recall rule)
+        rule = hold["tier_final"].to_numpy(dtype=object)
+    hold = hold.assign(tier_rule=rule, tier_issued=np.where(refused, hold["tier_now"], rule),
+                       refused=refused.to_numpy())
+    p = hold["p_critical"] if "p_critical" in hold else pd.Series(np.nan, index=hold.index)
+    hold["watch"] = (hold["tier_issued"] != CRITICAL) & ~hold["refused"] & (p >= threshold) & (p < confirm)
 
     def block(df, note):
-        return {"n": int(len(df)), "note": note, "n_refused": int(df["event_id"].isin(review_ids or set()).sum()),
-                "baseline": confusion(df["tier_actual"], df["tier_now"]),
-                "model": confusion(df["tier_actual"], df["tier_issued"]),
-                "model_before_refusals": confusion(df["tier_actual"], df["tier_final"])}
+        return {"n": int(len(df)), "note": note, "n_refused": int(df["refused"].sum()),
+                "n_watch": int(df["watch"].sum()), "critical_threshold": confirm, "watch_threshold": threshold,
+                "baseline": {**confusion(df["tier_actual"], df["tier_now"]),
+                             "recall_reach": recall_reach(df["tier_actual"], df["tier_now"], False, df["refused"])},
+                "model": {**confusion(df["tier_actual"], df["tier_issued"]),
+                          "recall_reach": recall_reach(df["tier_actual"], df["tier_issued"], df["watch"],
+                                                       df["refused"])},
+                "model_before_refusals": confusion(df["tier_actual"], df["tier_rule"]),
+                "model_95pct_recall_rule": confusion(  # the previous rule: Critical at the recall threshold
+                    df["tier_actual"], np.where(df["refused"], df["tier_now"], df["tier_final"]))}
 
     out = {"holdout": block(hold, "all held-out events (organisers' usable set), 20% by event_id")}
     if "final_ttca" in hold:
