@@ -41,7 +41,7 @@ DECISIONS = ["Undecided", "Maneuver", "Monitor", "Dismiss"]
 def _filter(queue):
     """Filters on the table itself. An empty pill selection means 'no filter on that field'."""
     with st.container(key="queue-filters"):
-        f = st.columns([2.8, 3.6, 4.6, 5.2], gap="large", vertical_alignment="top")
+        f = st.columns([2.6, 4.4, 4.4, 5.0], gap="medium", vertical_alignment="top")
         search = f[0].text_input("Find event", placeholder="Event ID", key="queue_search")
         review_only = f[0].toggle("Review only", key="queue_review",
                                   help="Only events with too little evidence to forecast")
@@ -67,7 +67,12 @@ def _filter(queue):
 def _why(v, r) -> str:
     """The reason's first clause in the table (the rule or the refusal); the full text on hover."""
     text = v if isinstance(v, str) else ""
-    head = text.split(" (")[0] if text.startswith("INSUFFICIENT") else text.split(";")[0]
+    if text.startswith("INSUFFICIENT"):
+        head = "Insufficient evidence: " + text.split("(", 1)[1].split(")")[0] if "(" in text else text
+    else:
+        # 'Critical now (miss 97 m < 1,000 m); …' -> 'miss 97 m < 1,000 m': the pill already names the tier
+        first = text.split(";")[0]
+        head = first.split("(", 1)[1].rsplit(")", 1)[0] if "(" in first else first
     return f'<span class="why" title="{escape(text)}">{escape(head)}</span>'
 
 

@@ -27,7 +27,7 @@ style.apply()
 events, cdms, source = load(str(data_dir()), stamp())
 
 with st.sidebar:
-    st.caption(f"Data: {source}")
+    st.caption(f"Source · {source}")
     splits = sorted(events.split.unique())
     split = st.selectbox("Events", splits, index=splits.index("test") if "test" in splits else 0)
     tiers = st.multiselect("Tier (final)", TIERS, default=TIERS)
@@ -63,8 +63,10 @@ with right:
     if len(shown):
         components.html(hero.hero_html(hero.hero_figure(shown, history, split=split), height=HERO_HEIGHT),
                         height=HERO_HEIGHT)
-        st.markdown(style.label("Each point: one encounter relative to the primary (RTN frame), distance on a log "
-                                "scale. Spheres at 1 km and 5 km. Drag to rotate."), unsafe_allow_html=True)
+        # A plain caption under the scene, not an uppercase label (it sat above the KPI row and read like one)
+        st.markdown(f'<p style="margin:-0.6rem 0 0;font-size:0.76rem;line-height:1.4;color:{style.MUTED};'
+                    'text-align:center">Each point is one encounter relative to the primary (RTN frame), distance '
+                    'on a log scale; spheres at 1 km and 5 km. Drag to rotate.</p>', unsafe_allow_html=True)
 
 # ---- KPI row: flat giant numbers; order matters to the tests (Events … Undecided) ----
 with st.container(key="kpis"):
@@ -85,7 +87,9 @@ with st.container(key="kpis"):
 worst = shown[shown.tier_final == CRITICAL].sort_values(["p_critical", "risk_forecast"], ascending=False).head(14)
 st.markdown(style.marquee([
     f"<b>EVT {r.event_id}</b> · Pc {format_pc(r.risk_latest)} · {format_miss(r.miss_latest_m)} · "
-    f"T−{format_ttca(r.time_to_tca)}" for r in worst.itertuples()]), unsafe_allow_html=True)
+    # units stay lowercase inside the uppercase ticker
+    f'<span style="text-transform:none;margin:0">T−{format_ttca(r.time_to_tca)}</span>'
+    for r in worst.itertuples()]), unsafe_allow_html=True)
 
 queue_tab, detail_tab, fleet_tab, window_tab, eval_tab, cascade_tab = st.tabs(
     ["01  Operations queue", "02  Event detail", "03  Fleet overview", "04  Next 24 hours", "05  Evaluation",
