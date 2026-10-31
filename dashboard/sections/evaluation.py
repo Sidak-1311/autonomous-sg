@@ -43,12 +43,55 @@ def headline(metrics: dict | None):
     if "model" not in metrics:
         st.info("No trained model yet, so these are baseline numbers only. "
                 "The forecaster's full training run is waiting for the team's go-ahead.")
-    with st.expander("All metrics with 95% intervals"):
-        st.dataframe(metrics_table(metrics), width="stretch", column_config={
+    table = metrics_table(metrics)
+    run = metrics.get("model") or base
+    st.write("")
+    st.markdown(style.label("All metrics with 95% intervals"), unsafe_allow_html=True)
+    view = table.reset_index().rename(columns=VIEW_NAMES)   # html_table needs identifier column names
+    st.markdown(style.html_table(view, metric_columns(view), foot=(
+        f"<span>{run.get('n_critical', '?'):,} actual Critical events among {run.get('n_events', '?'):,} · "
+        "out of fold</span><span>Baseline = latest CDM carried to TCA · lower is better for MSE and loss</span>")),
+        unsafe_allow_html=True)
+    with st.expander("Export or sort as a grid"):
+        st.dataframe(table, width="stretch", column_config={
             name: st.column_config.NumberColumn(name, format="%.3f") for name in ("baseline", "model")})
-        run = metrics.get("model") or base
-        st.caption(f"{run.get('n_critical', '?'):,} actual Critical events among {run.get('n_events', '?'):,}; "
-                   "baseline = the latest CDM carried to TCA; lower is better for MSE and loss.")
+
+
+PCT_METRICS = {"Critical recall", "Critical precision"}
+VIEW_NAMES = {"baseline 95% CI": "baseline_ci", "model 95% CI": "model_ci", "model better?": "model_better"}
+
+
+def _metric_value(v, r) -> str:
+    if v != v:
+        return '<span class="dim">—</span>'
+    return f"{v:.1%}" if r.metric in PCT_METRICS else f"{v:.3g}"
+
+
+def _metric_ci(v, r) -> str:
+    """metrics_table writes '[lo, hi]'; percentages get the same 1-dp % as their value."""
+    try:
+        lo, hi = (float(x) for x in str(v).strip("[]").split(","))
+    except ValueError:
+        return f'<span class="dim">{v}</span>'
+    text = f"{lo:.1%} – {hi:.1%}" if r.metric in PCT_METRICS else f"{lo:.3g} – {hi:.3g}"
+    return f'<span class="dim">{text}</span>'
+
+
+def _verdict(v, _) -> str:
+    """yes / no / same as chips: 'yes' lit, the others quiet."""
+    return style.chip(v, on=v == "yes") if isinstance(v, str) else '<span class="dim">—</span>'
+
+
+def metric_columns(table: pd.DataFrame) -> list[tuple]:
+    """Columns for whichever scorers metrics.json has (baseline only before the model is trained)."""
+    cols = [("metric", "Metric", "l", lambda v, r: f'<span class="strong">{v}</span>')]
+    for name in ("baseline", "model"):
+        if name in table:
+            cols += [(name, name.title(), "r", _metric_value),
+                     (f"{name}_ci", "95% CI", "r", _metric_ci)]
+    if "model_better" in table:
+        cols.append(("model_better", "Model better?", "l", _verdict))
+    return cols
 
 
 def fatigue(shown: pd.DataFrame):
@@ -96,7 +139,13 @@ def dilution_failure(shown: pd.DataFrame) -> str:
                           critical=known.tier_actual == CRITICAL, change=known.risk_final - known.risk_latest)
              .groupby("flag").agg(events=("critical", "size"), ended_critical=("critical", "mean"),
                                   median_change=("change", "median")))
-    with st.expander("Flagged vs not flagged"):
+    st.markdown(style.html_table(check.reset_index(), [
+        ("flag", "Pc-dilution flag", "l", lambda v, r: style.chip(v, on=v == "flagged")),
+        ("events", "Events", "r", lambda v, r: f"{v:,}"),
+        ("ended_critical", "Ended Critical", "r", lambda v, r: f'<span class="strong">{v:.1%}</span>'),
+        ("median_change", "Median change in log10 Pc to TCA", "r", lambda v, r: f"{v:+.1f}"),
+    ]), unsafe_allow_html=True)
+    with st.expander("Flagged vs not flagged as a grid"):
         st.dataframe(check, width="stretch", column_config={
             "ended_critical": st.column_config.NumberColumn("ended Critical", format="percent"),
             "median_change": st.column_config.NumberColumn("median change in log10 Pc to TCA", format="%.1f")})

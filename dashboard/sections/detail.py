@@ -12,6 +12,29 @@ def stat(value: str, caption: str, tier: str | None = None) -> str:
         'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);color:', 1)
 
 
+def _signed_at(v, _) -> str:
+    t = pd.to_datetime(v, utc=True, errors="coerce")
+    return t.strftime("%d %b %H:%M UTC") if t is not pd.NaT else f'<span class="dim">{v}</span>'
+
+
+def _opt_text(v, _) -> str:
+    """Free text (analyst, note), escaped; a dash when empty."""
+    from html import escape
+    return escape(str(v)) if isinstance(v, str) and v.strip() else '<span class="dim">—</span>'
+
+
+# Newest first: when it was signed, who, what, and what the system showed at that moment
+DECISION_LOG_COLUMNS = [
+    ("at_utc", "Signed", "l", _signed_at),
+    ("analyst", "Analyst", "l", _opt_text),
+    ("decision", "Decision", "l", lambda v, r: style.chip(str(v), on=v == "Maneuver")),
+    ("note", "Note", "l", _opt_text),
+    ("tier_final", "Tier shown", "l", lambda v, r: style.tier_pill(v)),
+    ("p_critical", "P(Critical) shown", "l", lambda v, r: style.prob_bar(v)),
+    ("forecast_source", "Forecast", "l", lambda v, r: f'<span class="dim">{v}</span>'),
+]
+
+
 def note_card(title: str, body: str, tier: str | None = None) -> str:
     edge = f"border-left:3px solid {TIER_COLORS[tier]};" if tier else ""
     return (f'<div class="bm-card" style="{edge}margin-bottom:0.8rem">{style.label(title)}'
@@ -79,7 +102,10 @@ def render(ctx):
         signed = decisions[(decisions.split == split) & (decisions.event_id == ev)]
         if len(signed):
             st.markdown(style.label("Decision log · what the system showed at signing"), unsafe_allow_html=True)
-            st.dataframe(signed.drop(columns=["split", "event_id"]), hide_index=True, width="stretch")
+            st.markdown(style.html_table(signed.sort_values("at_utc", ascending=False), DECISION_LOG_COLUMNS,
+                                         max_height=320), unsafe_allow_html=True)
+            with st.expander("Decision log as a grid"):
+                st.dataframe(signed.drop(columns=["split", "event_id"]), hide_index=True, width="stretch")
 
         with st.expander("Generated summary (Gemini)"):
             sent = brief.facts(e.to_dict() | {"event_id": ev})
