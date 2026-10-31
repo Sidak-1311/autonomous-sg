@@ -459,7 +459,7 @@ def html_table(df, columns: list[tuple], max_height: int = 560, rank: bool = Fal
 def top_bar(meta: list[tuple[str, str]]) -> str:
     """Wordmark plus uppercase status items, e.g. [('Split', 'test'), ('Events', '2,167')]."""
     items = "".join(f"<span>{k} <b>{v}</b></span>" for k, v in meta)
-    return (f'<div class="bm-top"><span class="mark">Triage<i> / </i>TCA</span>'
+    return (f'<div class="bm-top"><span class="mark">Apsis</span>'
             f'<span class="meta"><span><span class="bm-dot"></span>Live queue</span>{items}</span></div>')
 
 

@@ -1,4 +1,4 @@
-# Triage-TCA: orbital collision risk evaluator
+# Apsis: orbital collision risk evaluator
 
 A triage tool for **conjunction analysts**, the people who read the thousands of
 conjunction data messages (CDMs) a satellite operator receives each day and decide
@@ -6,7 +6,7 @@ which close approaches need a maneuver. Today that means checking warnings one b
 one against Pc and miss-distance thresholds, and committing to a burn at least
 2 days before closest approach (TCA), before the most reliable CDMs arrive.
 
-Triage-TCA reads the CDM history of every encounter and, at that 2-day decision point:
+Apsis reads the CDM history of every encounter and, at that 2-day decision point:
 
 1. **Tiers it by rule** (Safe / Elevated / Critical, NASA/SP-20205011318 and ESA SDO
    thresholds). Deterministic and auditable.
@@ -90,7 +90,7 @@ at it, no maneuver call); refused events (insufficient evidence) keep their curr
 go to an analyst. *Reach* = share of real Criticals that land in front of an analyst as
 Critical, Watch or a refusal.
 
-| Held out (2,389 events) | Latest-tier baseline | Triage-TCA | |
+| Held out (2,389 events) | Latest-tier baseline | Apsis | |
 |---|---|---|---|
 | Critical recall | 0.877 | **0.916** | 141 of 154 Criticals issued Critical, vs 135 |
 | Critical precision | 0.808 | 0.684 | 206 Critical calls vs 167 |
@@ -111,7 +111,7 @@ in `metrics.json` (`model_95pct_recall_rule`) for comparison.
 
 Across all 11,942 events, out of fold:
 
-| | Latest-tier baseline | Triage-TCA | |
+| | Latest-tier baseline | Apsis | |
 |---|---|---|---|
 | Critical recall | 0.866 [0.84, 0.89] | **0.908** [0.89, 0.93] | |
 | Critical precision | 0.851 [0.83, 0.88] | 0.756 [0.73, 0.78] | |

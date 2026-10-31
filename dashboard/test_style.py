@@ -59,7 +59,7 @@ def test_default_data_dir_is_the_repo_data_folder(monkeypatch):
 
 def test_shell_helpers():
     bar = style.top_bar([("Split", "test"), ("Events", "2,167")])
-    assert "Triage" in bar and "<b>2,167</b>" in bar
+    assert "Apsis" in bar and "<b>2,167</b>" in bar
     assert style.marquee([]) == ""
     ticker = style.marquee(["EVT 1", "EVT 2"])
     assert ticker.count("EVT 1") == 2  # repeated for a seamless loop

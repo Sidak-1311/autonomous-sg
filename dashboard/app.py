@@ -22,7 +22,7 @@ from src.tiering import CRITICAL, SAFE, TIERS, format_miss, format_pc, format_tt
 
 HERO_HEIGHT = 520
 
-st.set_page_config(page_title="Triage-TCA", page_icon=":material/radar:", layout="wide",
+st.set_page_config(page_title="Apsis", page_icon=":material/radar:", layout="wide",
                    initial_sidebar_state="collapsed")
 style.apply()
 events, cdms, source = load(str(data_dir()), stamp())
@@ -58,10 +58,11 @@ st.markdown(style.top_bar([("Split", split), ("Events", f"{len(shown):,}"), ("Fo
 # ---- hero: the claim on the left, every encounter around the primary on the right ----
 left, right = st.columns([5, 6], gap="large", vertical_alignment="center")
 with left:
-    st.markdown('<div class="bm-display">Every close approach. <em>Worst first.</em></div>'
-                f'<p class="bm-lede"><b>{len(shown):,} conjunctions</b> screened at the 2-day decision point. '
-                'Rules set the tier, a calibrated forecaster looks ahead to closest approach, and an analyst '
-                'signs every call.</p>', unsafe_allow_html=True)
+    st.markdown('<div class="bm-display" style="font-size:clamp(2.4rem, 3.7vw, 3.9rem);line-height:1">Find the close approaches that need a maneuver '
+                '<em>while there is still time to plan one.</em></div>'
+                f'<p class="bm-lede">Apsis checks <b>{len(shown):,} conjunctions</b> two days before closest '
+                'approach. The rules set each tier, a calibrated forecaster looks ahead to the final reading, '
+                'and an analyst signs off on every call.</p>', unsafe_allow_html=True)
 with right:
     if len(shown):
         components.html(hero.hero_render(shown, history, split=split), height=HERO_HEIGHT)

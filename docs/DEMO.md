@@ -8,7 +8,7 @@ All event ids below are test events.
 
 "A conjunction analyst gets thousands of collision warnings a day and must decide on a
 maneuver at least two days before closest approach, before the best data arrive. Today
-that's thresholds checked by hand. Triage-TCA ranks every encounter, explains it, and says
+that's thresholds checked by hand. Apsis ranks every encounter, explains it, and says
 when it doesn't know."
 
 ## 0:25 to 0:55: Operations queue
