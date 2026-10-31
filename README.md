@@ -149,11 +149,12 @@ simpler model stays.
 - **Low alert threshold.** Catching 95% of Criticals needs a calibrated P(crit) ≥ 4.9%, so
   many events are raised at single-digit probabilities. Every such reason states the
   threshold explicitly ("P(crit) 33.4% ≥ alert threshold 4.9%, set for 95% recall").
-- **Misses are geometry closing late.** Almost every missed Critical is Critical only because
-  the final miss distance drops below 1,000 m after the decision point while Pc stays
-  below 10⁻⁴ (`models/error_analysis.json`). Catching them by lowering a miss threshold
-  costs roughly a dozen extra reviews per Critical caught (`miss_watch_tradeoff` in that
-  file), so that dial is left to the analyst.
+- **Misses are geometry closing late.** All 3 Criticals missed on the holdout (43 of 44 out
+  of fold) became Critical by geometry alone: the miss distance closed below 1,000 m after
+  the 2-day decision point while Pc stayed below 10⁻⁴ (e.g. event 1936: 13,748 m → 657 m,
+  issued Safe; `models/error_analysis_holdout.json`). Raising every event with a forecast
+  miss under 1,500 m would catch 12 more out of fold for 92 more alerts (~8 reviews per
+  catch), so that dial is left to the analyst.
 - **Storm sensitivity is not a storm forecast.** With F10/AP at the data's 99th percentile,
   38 test events flip to Critical; this likely reflects solar-cycle correlations in
   2015–2019 data, not drag physics. Shown as sensitivity only.
