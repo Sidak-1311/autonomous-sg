@@ -125,7 +125,9 @@ Across all 11,942 events, out of fold:
 every test event (Zenodo 4463683). We use it only to score the frozen model, never to train,
 tune, pick thresholds or choose between models: Critical recall **0.881** vs 0.824 baseline,
 precision 0.691 vs 0.855, reach **0.933** vs 0.829 (2,167 events, 193 Critical; 150 on Watch;
-the Criticals issued Safe are listed with causes in the Evaluation tab).
+the Criticals issued Safe are listed with causes in the Evaluation tab). Queue depth to catch
+95% of Criticals is 493 vs 515: only **4% fewer** reviews, so the 36% out-of-fold saving does
+not carry over to unseen events.
 
 Brackets are bootstrap 95% CIs (queue depth: paired bootstrap over events). Queue depth
 is measured in the dashboard's queue order (tier, then P(crit), then forecast risk) on
@@ -167,8 +169,9 @@ simpler model stays.
   precision) is 0.858 vs 0.862 on the holdout, 0.873 vs 0.863 out of fold and 0.835 vs 0.830
   on the lockbox, model vs latest-tier baseline. On the lockbox the model issues 246 Criticals
   to the baseline's 186 to catch 11 more (170 vs 159). The case for the model rests on reach
-  (93% vs 83% of real Criticals in front of an analyst) and on the ranking: the queue to 95%
-  recall is 36% shorter.
+  (93% vs 83% of real Criticals in front of an analyst), not on saving work: the queue to 95%
+  recall is 36% shorter out of fold but only 4% shorter on the lockbox (493 vs 515). Sorting
+  by latest miss distance alone ranks nearly as well as P(crit) there (ROC AUC 0.964 vs 0.971).
 - **Misses are geometry closing late.** All 3 Criticals missed on the holdout (43 of 44 out
   of fold) became Critical by geometry alone: the miss distance closed below 1,000 m after
   the 2-day decision point while Pc stayed below 10⁻⁴ (e.g. event 1936: 13,748 m → 657 m,
