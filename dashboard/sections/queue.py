@@ -17,6 +17,40 @@ def render(ctx):
                 f'<b>{n_review:,}</b> have too little evidence to forecast and stay here whatever their tier.</p>',
                 unsafe_allow_html=True)
 
+    shown_rows = queue.head(TABLE_ROWS)
+    st.markdown(style.html_table(shown_rows, TABLE_COLUMNS, max_height=640, rank=True, foot=(
+        f"<span>Showing {len(shown_rows):,} of {len(queue):,} · worst first</span>"
+        "<span>Open any event in 02 Event detail</span>")), unsafe_allow_html=True)
+
+    with st.expander("Export or sort the full queue as a grid"):
+        _grid(queue)
+
+
+TABLE_ROWS = 300
+
+
+def _flags(_, r) -> str:
+    flags = [style.chip("Review") if r.needs_review else "", style.chip("Storm", on=False) if r.storm_flips else "",
+             style.chip("σ-limited", on=False) if r.pc_diluted else ""]
+    return "".join(flags) or '<span class="dim">—</span>'
+
+
+TABLE_COLUMNS = [
+    ("event_id", "Event", "l", lambda v, r: f'<span class="strong">{v}</span>'),
+    ("tier_final", "Tier", "l", lambda v, r: style.tier_pill(v)),
+    ("p_critical", "P(Critical at TCA)", "l", lambda v, r: style.prob_bar(v)),
+    ("risk_latest", "Pc now", "r", lambda v, r: format_pc(v)),
+    ("risk_hi", "Pc at TCA · 95% bound", "r", lambda v, r: f'<span class="dim">{format_pc(v)}</span>'),
+    ("miss_latest_m", "Miss now", "r", lambda v, r: format_miss(v)),
+    ("time_to_tca", "Time to TCA", "r", lambda v, r: format_ttca(v)),
+    ("c_object_type", "Object", "l", lambda v, r: f'<span class="dim">{str(v).title()}</span>'),
+    (None, "Flags", "l", _flags),
+    ("decision", "Decision", "l", lambda v, r: v if v else '<span class="dim">—</span>'),
+]
+
+
+def _grid(queue):
+    """The plain sortable grid, for CSV export and column sorting."""
     pc_text, miss_text = (lambda s: [format_pc(v) for v in s]), (lambda s: [format_miss(v) for v in s])
     view = queue[["event_id", "tier_final", "decision", "needs_review", "tier_now", "p_critical", "risk_latest",
                   "risk_forecast", "risk_hi", "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type",

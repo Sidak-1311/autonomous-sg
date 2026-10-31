@@ -12,11 +12,13 @@ Layout helpers (all return HTML for st.markdown(..., unsafe_allow_html=True)):
     card(inner_html)                         20px rounded surface
     pill("CRITICAL")                         tier as a coloured text pill
 """
+from html import escape
+
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-from src.tiering import RISK_FLOOR, TIERS, TIER_COLORS
+from src.tiering import RISK_FLOOR, TIERS, TIER_COLORS, format_prob
 
 BG, SURFACE, LINE = "#101010", "#1A1A1A", "#262626"
 TEXT, MUTED, ACCENT = "#F2F2F2", "#8A8A8A", "#FFD600"
@@ -135,6 +137,36 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
   text-transform: uppercase; }}
 .st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
 
+/* ---- styled data tables (html_table) ---- */
+.bm-table-wrap {{ overflow: auto; border-top: 1px solid {LINE}; border-bottom: 1px solid {LINE};
+  scrollbar-width: thin; scrollbar-color: {LINE} transparent; }}
+.bm-table {{ width: 100%; border-collapse: collapse; font: 400 0.92rem {FONT};
+  font-feature-settings: "tnum" 1; color: {TEXT}; }}
+.bm-table thead th {{ position: sticky; top: 0; z-index: 2; background: {BG}; text-align: left;
+  font: 600 0.66rem {FONT}; letter-spacing: 0.09em; text-transform: uppercase; color: {MUTED};
+  padding: 0.85rem 0.9rem 0.7rem; border-bottom: 1px solid {LINE}; white-space: nowrap; }}
+.bm-table td {{ padding: 0.78rem 0.9rem; border-bottom: 1px solid rgba(255,255,255,0.045);
+  white-space: nowrap; vertical-align: middle; }}
+.bm-table tbody tr {{ transition: background 0.12s ease; }}
+.bm-table tbody tr:hover {{ background: {SURFACE}; }}
+.bm-table .r {{ text-align: right; }}
+.bm-table th.r {{ text-align: right; }}
+.bm-table .dim {{ color: {MUTED}; }}
+.bm-table .strong {{ font-weight: 800; letter-spacing: -0.02em; }}
+.bm-table .rank {{ color: #4A4A4A; font-weight: 600; width: 2.4rem; }}
+.bm-tier {{ display: inline-flex; align-items: center; gap: 0.45rem; font: 700 0.7rem {FONT};
+  letter-spacing: 0.08em; padding: 0.28rem 0.65rem 0.28rem 0.55rem; border-radius: 999px; }}
+.bm-tier::before {{ content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }}
+.bm-bar {{ display: inline-flex; align-items: center; gap: 0.7rem; min-width: 9.5rem; }}
+.bm-bar .track {{ flex: 1; height: 4px; border-radius: 4px; background: {LINE}; overflow: hidden; }}
+.bm-bar .fill {{ display: block; height: 100%; border-radius: 4px; background: {TEXT}; }}
+.bm-bar .val {{ width: 3.6rem; text-align: right; font-weight: 600; }}
+.bm-chip {{ display: inline-block; font: 700 0.6rem {FONT}; letter-spacing: 0.09em; text-transform: uppercase;
+  padding: 0.22rem 0.5rem; border-radius: 6px; border: 1px solid {LINE}; color: {MUTED}; margin-right: 0.3rem; }}
+.bm-chip.on {{ color: {TEXT}; border-color: #5A5A5A; }}
+.bm-table-foot {{ display: flex; justify-content: space-between; padding-top: 0.7rem; font: 600 0.66rem {FONT};
+  letter-spacing: 0.08em; text-transform: uppercase; color: {MUTED}; }}
+
 /* buttons: solid white pills with dark text (the white primary made text vanish) */
 .stButton button, [data-testid="stFormSubmitButton"] button {{ background: {TEXT} !important;
   border: none !important; border-radius: 999px !important; padding: 0.5rem 1.4rem !important; }}
@@ -197,6 +229,51 @@ def hero_stat(value: str, caption: str, tier: str | None = None, size: str = "he
 
 def card(inner_html: str) -> str:
     return f'<div class="bm-card">{inner_html}</div>'
+
+
+# ---- styled data tables ----------------------------------------------------
+
+def tier_pill(tier) -> str:
+    """Tier word in its colour on a faint tint of the same colour; plain text if unknown."""
+    if tier not in TIER_COLORS:
+        return f'<span class="dim">{escape(str(tier or "—"))}</span>'
+    c = TIER_COLORS[tier]
+    return f'<span class="bm-tier" style="color:{c};background:{c}1F">{tier}</span>'
+
+
+def prob_bar(p) -> str:
+    """Probability as a thin bar plus its value; 'no forecast' when withheld (NaN)."""
+    if p is None or p != p:
+        return '<span class="dim">no forecast</span>'
+    pct = max(0.0, min(1.0, float(p)))
+    return (f'<span class="bm-bar"><span class="track"><span class="fill" style="width:{pct * 100:.1f}%">'
+            f'</span></span><span class="val">{format_prob(p)}</span></span>')
+
+
+def chip(text: str, on: bool = True) -> str:
+    return f'<span class="bm-chip{" on" if on else ""}">{escape(text)}</span>'
+
+
+def html_table(df, columns: list[tuple], max_height: int = 560, rank: bool = False, foot: str = "") -> str:
+    """A styled table as HTML for st.markdown(..., unsafe_allow_html=True).
+
+    columns: (key, header, align, render) per column, where align is 'l' or 'r' and
+    render(value, row) -> HTML (or None to show the escaped value). Use key=None for
+    columns computed from the whole row.
+    """
+    head = ("<th></th>" if rank else "") + "".join(
+        f'<th class="{"r" if a == "r" else ""}">{escape(h)}</th>' for _, h, a, _ in columns)
+    body = []
+    for i, row in enumerate(df.itertuples(index=False), 1):
+        cells = f'<td class="rank">{i:02d}</td>' if rank else ""
+        for key, _, align, render in columns:
+            value = getattr(row, key) if key else None
+            html = render(value, row) if render else escape("" if value is None else str(value))
+            cells += f'<td class="{"r" if align == "r" else ""}">{html}</td>'
+        body.append(f"<tr>{cells}</tr>")
+    table = (f'<div class="bm-table-wrap" style="max-height:{max_height}px"><table class="bm-table">'
+             f'<thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+    return table + (f'<div class="bm-table-foot">{foot}</div>' if foot else "")
 
 
 def top_bar(meta: list[tuple[str, str]]) -> str:

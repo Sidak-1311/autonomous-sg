@@ -70,3 +70,27 @@ def test_hero_stat_row_size_wraps_in_stat_row():
     assert row.startswith('<div class="stat-row">') and ">1,466<" in row
     assert "stat-row" not in style.hero_stat("394", "Critical")
     assert ".stat-row .bm-hero .num" in style.CSS and "nowrap" in style.CSS
+
+
+def test_html_table_renders_rows_escapes_and_ranks():
+    import pandas as pd
+    df = pd.DataFrame({"event_id": [7, 8], "tier_final": ["CRITICAL", "SAFE"], "p": [0.5, float("nan")],
+                       "note": ["<b>x</b>", None]})
+    html = style.html_table(df, [
+        ("event_id", "Event", "l", None),
+        ("tier_final", "Tier", "l", lambda v, r: style.tier_pill(v)),
+        ("p", "P", "r", lambda v, r: style.prob_bar(v)),
+        ("note", "Note", "l", None),
+    ], rank=True, foot="2 rows")
+    assert html.count("<tr>") == 3                      # header + 2 rows
+    assert ">01<" in html and ">02<" in html            # rank column
+    assert "&lt;b&gt;x&lt;/b&gt;" in html               # raw values are escaped
+    assert TIER_COLORS[CRITICAL] in html and "no forecast" in html and "50.0%" in html
+    assert 'class="bm-table-foot"' in html
+
+
+def test_table_bits_handle_edge_values():
+    assert "width:100.0%" in style.prob_bar(1.7)        # clipped to the track
+    assert "width:0.0%" in style.prob_bar(-0.2)
+    assert "dim" in style.tier_pill(None) and "UNKNOWN" not in style.tier_pill(None)
+    assert 'class="bm-chip"' in style.chip("Storm", on=False) and "on" in style.chip("Review")
