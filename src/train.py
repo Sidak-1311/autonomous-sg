@@ -13,6 +13,10 @@ Each regressor must beat the latest-value baseline out of fold, or predict()
 falls back to it. Saves models/forecaster.joblib, models/cv_metrics.json and
 models/oof_predictions.parquet (out-of-fold forecasts for the train events).
 
+The balanced classifier's scores are not probabilities, so they are mapped
+through an isotonic calibration fit on the OOF scores (--calibrate-only redoes
+just that in seconds); models/calibration.json reports Brier and reliability.
+
 Also writes models/conformal.json (no training needed, --conformal-only):
 split-conformal bounds on final risk around risk_latest per tier_now group,
 with out-of-fold coverage, and the storm levels for storm_stress().
@@ -47,6 +51,7 @@ INTERVAL_ALPHA = 0.1
 INTERVAL_MIN_N = 30
 # Storm stress test: space weather at this quantile of the data
 STORM_QUANTILE = 0.99
+RELIABILITY_BINS = [0.0, 0.001, 0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0]
 STORM_COLS = ["F10", "AP", "F10_mean", "AP_mean"]
 
 # Readable names for drivers: (text when above the train median, text when below)
@@ -280,8 +285,83 @@ def predict(bundle: dict, ev_df: pd.DataFrame) -> pd.DataFrame:
     pred = _raw_predict(bundle["models"], X, ev_df["risk_latest"], ev_df["log_miss"])
     pred = _apply_fallback(pred, bundle["use_risk_model"], bundle["use_miss_model"],
                            ev_df["risk_latest"], ev_df["miss_latest_m"])
+    # Drivers rank on the raw score; calibration is monotone so the ranking is the same
     pred["drivers"] = _drivers(bundle["models"], X, bundle["medians"], pred["p_critical"])
+    pred["p_critical"] = calibrate_p(pred["p_critical"], bundle.get("calibration"))
     return pd.DataFrame(pred, index=ev_df.index)
+
+
+def _isotonic_map(p: np.ndarray, y: np.ndarray) -> dict:
+    """Isotonic fit of y on p, as a strictly increasing piecewise-linear map
+    through the centre of each constant block (a step function would tie
+    events and reshuffle the queue)."""
+    from sklearn.isotonic import IsotonicRegression
+    fit = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0).fit_transform(p, y)
+    order = np.argsort(p, kind="stable")
+    ps, fs = np.asarray(p, float)[order], fit[order]
+    block = np.r_[0, np.cumsum(np.diff(fs) != 0)]
+    x = np.array([ps[block == b].mean() for b in np.unique(block)])
+    v = np.array([fs[block == b][0] for b in np.unique(block)])
+    return {"x": x.tolist(), "y": v.tolist()}
+
+
+def calibrate_p(p, calibration: dict | None) -> np.ndarray:
+    """Map raw classifier scores to calibrated P(Critical); identity without a map."""
+    p = np.asarray(p, float)
+    if not calibration:
+        return p
+    return np.interp(p, calibration["x"], calibration["y"])
+
+
+def _reliability(p: np.ndarray, y: np.ndarray) -> list[dict]:
+    rows = []
+    for lo, hi in zip(RELIABILITY_BINS[:-1], RELIABILITY_BINS[1:]):
+        m = (p >= lo) & ((p < hi) if hi < 1 else (p <= hi))
+        rows.append({"bin": [lo, hi], "n": int(m.sum()),
+                     "mean_p": float(p[m].mean()) if m.any() else None,
+                     "observed": float(y[m].mean()) if m.any() else None})
+    return rows
+
+
+def fit_calibration(p_raw, y, groups, n_folds: int = N_FOLDS) -> dict:
+    """Isotonic calibration of out-of-fold P(crit) scores.
+
+    The reported Brier score / reliability are cross-fitted (each fold mapped
+    by a calibrator fit on the other folds), so they are not flattered by
+    fitting and scoring on the same events. The stored map is fit on all
+    events and is strictly increasing, so ranking and recall are unchanged;
+    the alert threshold is re-derived on that calibrated scale.
+    """
+    p_raw, y = np.asarray(p_raw, float), np.asarray(y, bool)
+    p_cv = np.zeros(len(p_raw))
+    folds = GroupKFold(n_splits=min(n_folds, len(np.unique(groups))))
+    for tr, va in folds.split(p_raw, groups=groups):
+        p_cv[va] = calibrate_p(p_raw[va], _isotonic_map(p_raw[tr], y[tr]))
+    brier = lambda q: float(np.mean((q - y) ** 2))
+    cal_map = _isotonic_map(p_raw, y)
+    p_cal = calibrate_p(p_raw, cal_map)
+    return {
+        "method": "isotonic, linear between block centres",
+        "map": cal_map,
+        "p_calibrated": p_cal,
+        "crit_threshold": _threshold_for_recall(p_cal, y),
+        "crit_threshold_raw": _threshold_for_recall(p_raw, y),
+        "n_events": int(len(y)), "n_critical": int(y.sum()),
+        "brier_raw": brier(p_raw), "brier_calibrated": brier(p_cv),
+        "brier_climatology": brier(np.full(len(y), y.mean())),
+        "reliability_raw": _reliability(p_raw, y),
+        "reliability_calibrated": _reliability(p_cv, y),
+    }
+
+
+def apply_calibration(bundle: dict, oof: pd.DataFrame, cal: dict) -> tuple[dict, pd.DataFrame]:
+    """Bundle and OOF table that output calibrated P(crit) (raw score kept as p_critical_raw)."""
+    bundle = {**bundle, "calibration": cal["map"], "crit_threshold": cal["crit_threshold"],
+              "crit_threshold_raw": cal["crit_threshold_raw"]}
+    oof = oof.copy()
+    oof["p_critical_raw"] = oof.get("p_critical_raw", oof["p_critical"])
+    oof["p_critical"] = cal["p_calibrated"]
+    return bundle, oof
 
 
 def _residual_bounds(resid: np.ndarray, alpha: float) -> tuple[float, float]:
@@ -355,8 +435,9 @@ def storm_stress(bundle: dict, ev: pd.DataFrame, levels: dict | None = None) -> 
         if c in Xs:
             Xs[c] = np.maximum(Xs[c], v)   # a storm never lowers activity
     clf, thr = bundle["models"]["clf"], bundle["crit_threshold"]
-    p = clf.predict_proba(X)[:, 1]
-    p_storm = clf.predict_proba(Xs)[:, 1]
+    cal = bundle.get("calibration")
+    p = calibrate_p(clf.predict_proba(X)[:, 1], cal)
+    p_storm = calibrate_p(clf.predict_proba(Xs)[:, 1], cal)
     return pd.DataFrame({"p_critical_storm": p_storm,
                          "storm_flips": (p_storm >= thr) & (p < thr)}, index=ev.index)
 
@@ -371,10 +452,19 @@ def main():
     ap.add_argument("--out", type=Path, default=MODELS_DIR)
     ap.add_argument("--conformal-only", action="store_true",
                     help="only write conformal.json (seconds, no model training)")
+    ap.add_argument("--calibrate-only", action="store_true",
+                    help="only (re)fit P(crit) calibration on the saved OOF scores (seconds)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     ev = build_event_table(load_all())
+    if args.calibrate_only:
+        bundle = joblib.load(args.out / "forecaster.joblib")
+        oof = pd.read_parquet(args.out / "oof_predictions.parquet")
+        if "p_critical_raw" in oof:
+            oof["p_critical"] = oof["p_critical_raw"]
+        _calibrate_and_save(bundle, oof, ev, args.out)
+        return
     args.out.mkdir(parents=True, exist_ok=True)
     calib = calibrate_interval(ev)
     calib["storm_levels"] = storm_levels(ev)
@@ -389,14 +479,31 @@ def main():
     log.info("training on %d events (%d Critical)", len(ev), (ev["tier_actual"] == CRITICAL).sum())
     bundle, cv = train(ev)
 
-    joblib.dump(bundle, args.out / "forecaster.joblib")
     (args.out / "cv_metrics.json").write_text(json.dumps(cv["model"], indent=2, default=float))
-    cv["oof_table"].to_parquet(args.out / "oof_predictions.parquet", index=False)
+    _calibrate_and_save(bundle, cv["oof_table"], ev, args.out)
     for name in ["baseline", "model"]:
         m = cv[name]
         log.info("%-8s recall_crit %.3f precision_crit %.3f f2 %.3f mse_hr %.3f loss %.3f",
                  name, m["recall_critical"], m["precision_critical"], m["f2"], m["mse_hr"], m["loss"])
     log.info("saved %s", args.out / "forecaster.joblib")
+
+
+
+def _calibrate_and_save(bundle: dict, oof: pd.DataFrame, ev: pd.DataFrame, out: Path):
+    import joblib
+
+    truth = ev[(ev["split"] == "train") & ev["has_target"]].set_index("event_id")["tier_actual"]
+    y = (truth.loc[oof["event_id"]] == CRITICAL).to_numpy()
+    cal = fit_calibration(oof["p_critical"].to_numpy(), y, oof["event_id"].to_numpy())
+    bundle, oof = apply_calibration(bundle, oof, cal)
+    joblib.dump(bundle, out / "forecaster.joblib")
+    oof.to_parquet(out / "oof_predictions.parquet", index=False)
+    report = {k: v for k, v in cal.items() if k not in ("map", "p_calibrated")}
+    (out / "calibration.json").write_text(json.dumps(report, indent=2))
+    log.info("P(crit) calibration: Brier %.4f raw -> %.4f calibrated (climatology %.4f); "
+             "alert threshold %.4f raw -> %.4f calibrated", cal["brier_raw"],
+             cal["brier_calibrated"], cal["brier_climatology"], cal["crit_threshold_raw"],
+             cal["crit_threshold"])
 
 
 if __name__ == "__main__":

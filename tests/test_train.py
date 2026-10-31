@@ -156,3 +156,51 @@ def test_oof_forecast_replaces_only_fitted_train_rows():
     assert out.loc[~is_train].equals(fc.loc[~is_train])            # test rows untouched
     assert (out["drivers"] == fc["drivers"]).all()
     assert train.oof_forecast(fc.iloc[:0], both.iloc[:0], oof).empty
+
+
+def _miscalibrated(n=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    true_p = rng.beta(0.3, 3, n)
+    y = rng.random(n) < true_p
+    return true_p ** 0.3, y   # overconfident, but rank-preserving
+
+
+def test_isotonic_map_is_strictly_increasing_and_bounded():
+    p, y = _miscalibrated()
+    m = train._isotonic_map(p, y)
+    assert np.all(np.diff(m["x"]) > 0) and np.all(np.diff(m["y"]) > 0)
+    q = train.calibrate_p(np.r_[-1.0, 0.0, p, 1.0, 2.0], m)
+    assert q.min() >= 0 and q.max() <= 1 and np.all(np.diff(np.sort(q)) >= 0)
+    assert np.array_equal(train.calibrate_p(p, None), p)   # no map = identity
+
+
+def test_fit_calibration_improves_brier_and_keeps_ranking_and_recall():
+    p, y = _miscalibrated()
+    cal = train.fit_calibration(p, y, np.arange(len(p)), n_folds=3)
+    assert cal["brier_calibrated"] < cal["brier_raw"]
+    q = cal["p_calibrated"]
+    inside = (p > cal["map"]["x"][0]) & (p < cal["map"]["x"][-1])   # tails are clipped flat
+    assert np.array_equal(np.argsort(p[inside]), np.argsort(q[inside]))
+    assert (q[y] >= cal["crit_threshold"]).mean() >= 0.95
+    assert sum(r["n"] for r in cal["reliability_calibrated"]) == len(p)
+
+
+def test_apply_calibration_is_rerunnable():
+    p, y = _miscalibrated(n=300)
+    oof = pd.DataFrame({"event_id": np.arange(300), "p_critical": p})
+    cal = train.fit_calibration(p, y, oof["event_id"].to_numpy(), n_folds=3)
+    bundle, out = train.apply_calibration({"crit_threshold": 0.1}, oof, cal)
+    assert np.array_equal(out["p_critical_raw"], p) and bundle["crit_threshold_raw"] == cal["crit_threshold_raw"]
+    _, again = train.apply_calibration(bundle, out, cal)
+    assert np.array_equal(again["p_critical_raw"], p)   # raw is never overwritten
+
+
+def test_predict_and_storm_use_calibration():
+    ev = _events()
+    bundle, _ = train.train(ev, n_folds=3)
+    raw = train.predict(bundle, ev)["p_critical"].to_numpy()
+    cal = {"x": [0.0, 1.0], "y": [0.0, 0.5]}   # halves every score
+    out = train.predict({**bundle, "calibration": cal}, ev)
+    assert np.allclose(out["p_critical"], raw / 2)
+    storm = train.storm_stress({**bundle, "calibration": cal}, ev, {c: -1.0 for c in train.STORM_COLS})
+    assert np.allclose(storm["p_critical_storm"], raw / 2)

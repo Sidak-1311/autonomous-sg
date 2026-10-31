@@ -65,3 +65,27 @@ def test_values_exactly_on_thresholds():
 def test_floor_risk_and_nan_predictions():
     m = evaluate([-30.0, -30.0], [20_000.0, 20_000.0], [-30.0, -30.0], [SAFE, SAFE], n_boot=0)
     assert m["n_critical"] == 0 and np.isnan(m["recall_critical"]) and np.isnan(m["mse_hr"])
+
+
+def test_queue_depth_exact_small_case():
+    from src.metrics import queue_depth
+    y = np.array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0], bool)
+    perfect = np.argsort(~y, kind="stable").argsort()   # all Criticals first
+    m = queue_depth(y, perfect, np.arange(10), recall=0.95, n_boot=200)
+    assert m["model"] == 3 and m["baseline"] == 6 and m["reduction"] == 0.5
+    assert m["n_events"] == 10 and m["n_critical"] == 3
+    lo, hi = m["ci95"]["model"]
+    assert lo <= 3 <= hi
+
+
+def test_queue_depth_empty_and_no_criticals():
+    from src.metrics import queue_depth
+    assert queue_depth([], [], [])["model"] is None
+    m = queue_depth([False] * 5, np.arange(5), np.arange(5))
+    assert m["model"] is None and m["ci95"] == {}
+
+
+def test_queue_depth_single_event():
+    from src.metrics import queue_depth
+    m = queue_depth([True], [0], [0], n_boot=20)
+    assert m["model"] == 1 and m["baseline"] == 1 and m["reduction"] == 0.0

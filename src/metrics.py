@@ -60,3 +60,51 @@ def evaluate(risk_final, miss_final_m, risk_pred, tier_pred, n_boot=1000, seed=0
               if np.isfinite(v).any() else [float("nan")] * 2 for k, v in ci.items()}
     out["ci95"] = ci
     return out
+
+
+def _depth(y_sorted: np.ndarray, recall: float) -> np.ndarray:
+    """Events reviewed top-down until `recall` of the Criticals are found, per row."""
+    hits = np.cumsum(y_sorted, axis=-1)
+    need = np.ceil(recall * hits[..., -1:] - 1e-9)
+    return (hits < need).sum(-1) + 1
+
+
+def queue_depth(is_critical, rank_model, rank_baseline, recall=0.95, n_boot=1000, seed=0) -> dict:
+    """Queue depth needed to catch `recall` of the Criticals under two orderings
+    (rank 0 = top of the queue), with a paired bootstrap over events.
+
+    Each resample draws events with replacement and reviews them in each
+    ordering, so the model/baseline difference is measured on the same events.
+    Depths are reported as counts on the original number of events.
+    """
+    y = np.asarray(is_critical, bool)
+    n = len(y)
+    out = {"recall": recall, "n_events": int(n), "n_critical": int(y.sum())}
+    if n == 0 or not y.any():
+        return {**out, "model": None, "baseline": None, "reduction": None, "ci95": {}}
+    order_m, order_b = np.argsort(rank_model, kind="stable"), np.argsort(rank_baseline, kind="stable")
+    d_m, d_b = int(_depth(y[order_m], recall)), int(_depth(y[order_b], recall))
+    out.update(model=d_m, baseline=d_b, model_share=d_m / n, baseline_share=d_b / n,
+               reduction=1 - d_m / d_b)
+
+    rng = np.random.default_rng(seed)
+    pos_m = np.empty(n, int)
+    pos_m[order_m] = np.arange(n)
+    pos_b = np.empty(n, int)
+    pos_b[order_b] = np.arange(n)
+    boots = {"model": [], "baseline": [], "reduction": []}
+    for start in range(0, n_boot, 50):
+        idx = rng.integers(0, n, size=(min(50, n_boot - start), n))
+        keep = y[idx].any(axis=1)
+        idx = idx[keep]
+        if not len(idx):
+            continue
+        rows = np.arange(len(idx))[:, None]
+        bm = _depth(y[idx[rows, np.argsort(pos_m[idx], axis=1)]], recall)
+        bb = _depth(y[idx[rows, np.argsort(pos_b[idx], axis=1)]], recall)
+        boots["model"].append(bm)
+        boots["baseline"].append(bb)
+        boots["reduction"].append(1 - bm / bb)
+    out["ci95"] = {k: [float(x) for x in np.percentile(np.concatenate(v), [2.5, 97.5])]
+                   for k, v in boots.items() if v}
+    return out
