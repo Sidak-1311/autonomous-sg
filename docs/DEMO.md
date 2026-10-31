@@ -17,7 +17,7 @@ when it doesn't know."
   analyst review.
 - "Safe events leave the queue. Refusals never do, whatever their tier."
 - Point at the alert-fatigue curve: "To catch 95% of the dangerous events, today's
-  thresholds make you review the top 18% of the list; ours, 13.5%. That's 26% fewer
+  thresholds make you review the top 18% of the list; ours, 14%. That's about 21% fewer
   reviews, measured out of fold."
 
 ## 0:55 to 1:35: a Critical event, **event 891**
@@ -28,6 +28,9 @@ when it doesn't know."
   1e-1.6 with 90% confidence."* Drivers: *miss distance small, debris position precise.*
 - Suggested maneuver: shift radial separation by ~830 m, about a 0.23 m/s burn half an orbit
   before TCA. "A suggestion; the analyst signs off."
+- Analyst decision: choose **Maneuver**, sign, submit; it's logged with what the system showed.
+  (Optional, if a key is set: open the Gemini brief, which only rephrases these numbers
+  and shows exactly which fields were sent.)
 
 ## 1:35 to 2:05: what a threshold filter misses, **event 170**
 
@@ -39,7 +42,7 @@ when it doesn't know."
 
 - *"INSUFFICIENT EVIDENCE, analyst must review (only one CDM before the decision point)."*
 - "Safe by the rules, but with one CDM we won't forecast. On past data the tier is wrong
-  twice as often for events like this, so it stays with a human."
+  twice as often for events like this, so it stays with a human." Dismissing it needs a note.
 
 ## 2:25 to 2:55: honest evaluation (Evaluation tab)
 

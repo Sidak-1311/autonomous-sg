@@ -19,6 +19,9 @@ Triage-TCA reads the CDM history of every encounter and, at that 2-day decision 
    rules, and the approximate burn.
 
 The analyst stays in control: the tool ranks, explains and suggests; it never commands a burn.
+Each event has an **Analyst decision** (Maneuver / Monitor / Dismiss, signed; dismissing a
+Critical or a refusal requires a note), logged to `data/decisions.csv` with what the system
+showed at the time.
 
 ## Risk tiers (dataset units: `risk` = log10 Pc, `miss_distance` in metres)
 
@@ -80,10 +83,12 @@ so nothing shown on train events was predicted by a model that saw them.
 |---|---|---|---|
 | Critical recall | 0.820 [0.79, 0.85] | **0.951** [0.93, 0.97] | catches 13 points more Criticals |
 | Critical precision | 0.800 [0.77, 0.83] | 0.488 [0.46, 0.52] | price: about 2x the Critical list |
-| Queue depth to catch 95% of Criticals | 1,514 events (18.3%) | **1,119 events (13.5%)** | 26% fewer reviews |
+| Queue depth to catch 95% of Criticals | 1,514 events (18.3%) | **1,198 events (14.4%)** | 21% fewer reviews |
 | F2 / MSE on high-risk / ESA loss | 0.411 / 8.01 / 19.5 | same | risk forecast falls back to baseline (below) |
 
-Brackets are bootstrap 95% CIs. On `test_data.csv` the outcomes are hidden (data stop at
+Brackets are bootstrap 95% CIs. Queue depth is measured in the dashboard's queue order
+(tier, then P(crit), then forecast risk) on out-of-fold train rows; the baseline orders by
+latest tier, then latest risk. Never quote the 6% figure from an earlier in-sample run. On `test_data.csv` the outcomes are hidden (data stop at
 the 2-day cutoff), so test events are scored but not evaluated: 394 Critical, 307
 Elevated, 1,466 Safe of 2,167, with 91 refused for insufficient evidence.
 

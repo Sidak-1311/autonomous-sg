@@ -192,10 +192,11 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
                                 + ev.loc[review, "review_reason"] + "). "
                                 + ev.loc[review, "reason"])
 
-    # Queue order: worst tier, then highest forecast risk, then soonest TCA
+    # Queue order, same as the dashboard's: worst tier, then P(crit), then
+    # forecast risk, then soonest TCA (withheld events have no P(crit): last in tier)
     ev["_rank"] = ev["tier_final"].map({t: i for i, t in enumerate(TIERS)})
-    ev = ev.sort_values(["_rank", "risk_forecast_q90", "time_to_tca"],
-                        ascending=[False, False, True])
+    ev = ev.sort_values(["_rank", "p_critical", "risk_forecast", "time_to_tca"],
+                        ascending=[False, False, False, True], na_position="last")
     return ev[EVENT_COLS].reset_index(drop=True)
 
 
