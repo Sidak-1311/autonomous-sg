@@ -44,3 +44,24 @@ def test_bootstrap_ci_brackets_point_estimate():
     for k in ["recall_critical", "precision_critical", "f2", "mse_hr", "loss"]:
         lo, hi = m["ci95"][k]
         assert lo <= m[k] <= hi
+
+
+def test_empty_input_does_not_crash():
+    m = evaluate([], [], [], [], n_boot=100)
+    assert m["n_events"] == 0 and m["n_critical"] == 0 and m["ci95"] == {}
+
+
+def test_values_exactly_on_thresholds():
+    # Pc exactly 1e-4 and miss just under 1 km are Critical; exactly 1 km and 5 km are not
+    risk_final = [-4.0, -10.0, -10.0, -10.0, -6.0]
+    miss_final = [50_000.0, 999.9, 1_000.0, 5_000.0, 50_000.0]
+    m = evaluate(risk_final, miss_final, risk_final,
+                 [CRITICAL, CRITICAL, ELEVATED, ELEVATED, ELEVATED], n_boot=0)
+    assert m["n_critical"] == 2 and m["recall_critical"] == 1.0 and m["precision_critical"] == 1.0
+    # risk exactly -6 counts as high risk; exactly -4 too
+    assert m["f2"] == 1.0 and m["mse_hr"] == 0.0
+
+
+def test_floor_risk_and_nan_predictions():
+    m = evaluate([-30.0, -30.0], [20_000.0, 20_000.0], [-30.0, -30.0], [SAFE, SAFE], n_boot=0)
+    assert m["n_critical"] == 0 and np.isnan(m["recall_critical"]) and np.isnan(m["mse_hr"])
