@@ -32,7 +32,7 @@ def reason_lines(reason: str) -> str:
     """The pipeline's one-line reason ('Critical now (…); forecast …; 95% upper bound …; Pc falling …') as short
     labelled lines, one clause each."""
     parts = [p.strip() for p in reason.split("; ") if p.strip()]
-    return "<br>".join(f"<b>{p[:1].upper()}</b>{p[1:]}" if i == 0 else p for i, p in enumerate(parts))
+    return "<br>".join(p[:1].upper() + p[1:] for p in parts)
 
 
 def _signed_at(v, _) -> str:
@@ -87,7 +87,7 @@ def render(ctx):
         col.markdown(stat(value, caption, tier), unsafe_allow_html=True)
     if forecast and (bar := tier_probability_bar(e)):
         st.markdown(bar, unsafe_allow_html=True)
-    st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{e.c_object_type} · '
+    st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{str(e.c_object_type).capitalize()} · '
                 f"{reason_lines(text(e.reason))}</p>", unsafe_allow_html=True)
     if text(e.drivers):
         st.markdown(f'{style.label("Drivers")}<p style="margin-top:0.2rem">{text(e.drivers)}</p>',
@@ -202,5 +202,6 @@ def render(ctx):
         axis = dict(backgroundcolor="rgba(0,0,0,0)", gridcolor=style.LINE, color=style.MUTED, tickformat=",")
         geo.update_layout(scene=dict(xaxis=dict(title="t (m)", **axis), yaxis=dict(title="n (m)", **axis),
                                      zaxis=dict(title="r (m)", **axis), aspectmode="data"),
-                          height=440, margin=dict(l=0, r=0, t=0, b=40), legend=dict(orientation="h", y=0))
+                          height=440, margin=dict(l=0, r=0, t=30, b=40),
+                          legend=dict(orientation="h", x=0, y=1, yanchor="bottom"))   # top-left, clear of the ticks
         st.plotly_chart(geo, width="stretch")

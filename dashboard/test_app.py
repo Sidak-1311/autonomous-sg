@@ -279,6 +279,13 @@ def test_no_queue_depth_no_headline(tmp_path, monkeypatch):
     assert "Fewer reviews" not in page_text(at)
 
 
+def test_reason_lines_split_clauses_without_markup():
+    from dashboard.sections.detail import reason_lines
+    out = reason_lines("critical now (miss 202 m < 1,000 m); forecast Critical (P(crit) 99%); Pc falling")
+    assert out == "Critical now (miss 202 m < 1,000 m)<br>Forecast Critical (P(crit) 99%)<br>Pc falling"
+    assert reason_lines("") == "" and "<b>" not in out
+
+
 def test_event_header_strip(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
     text = page_text(at)  # event 0: CRITICAL, Pc exactly on the threshold, miss 6,000 m, 2.1 days out
