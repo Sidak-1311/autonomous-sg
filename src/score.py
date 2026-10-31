@@ -13,8 +13,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.cascade import CATALOG_COLUMNS, CATALOG_PATH, cascade, load_catalog
 from src.cascade import COLUMNS as CASCADE_OUT
-from src.cascade import cascade
 from src.features import build_event_table
 from src.ingest import CASCADE_COLUMNS, COLUMNS, PROCESSED_DIR, load_all
 from src.physics import combined_sigma, dilution, radial_maneuver
@@ -23,7 +23,9 @@ from src.tiering import (CRITICAL, TIERS, format_miss, format_pc, format_prob, r
 
 log = logging.getLogger(__name__)
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+ROOT = Path(__file__).resolve().parent.parent
+MODELS_DIR = ROOT / "models"
+LOCKBOX_PATH = ROOT / "data" / "external" / "kelvins" / "test_data_private.csv"
 MODEL_PATH = MODELS_DIR / "forecaster.joblib"
 CONFORMAL_PATH = MODELS_DIR / "conformal.json"
 OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
@@ -41,7 +43,8 @@ EVENT_COLS = [
     "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
     "needs_review", "review_reason",
     "risk_lo", "risk_hi", "forecast_in_sample", "p_critical_storm", "storm_flips",
-] + CASCADE_COLUMNS + CASCADE_OUT
+    "p_safe", "p_elevated", "final_ttca", "hard_subset", "tier_true", "risk_true", "miss_true",
+] + CASCADE_COLUMNS + CASCADE_OUT + CATALOG_COLUMNS
 
 
 def baseline_forecast(ev: pd.DataFrame) -> pd.DataFrame:
@@ -202,7 +205,14 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
 
     # "If this collision happened": fragments and chain risk to other missions in the
     # shell. Run on all events (both splits) so every mission is known to the shell model.
-    ev = ev.join(cascade(ev))
+    # Hard subset: the final CDM is still to come at the decision point (otherwise the final
+    # tier is already visible and any scorer gets it right)
+    ev["hard_subset"] = ev.get("final_ttca", pd.Series(np.nan, index=ev.index)) < 2.0
+
+    # With the CelesTrak catalogue (git-ignored download), also the chain against every
+    # tracked object in the shell, not just our own missions
+    catalog_file = ROOT / CATALOG_PATH
+    ev = ev.join(cascade(ev, catalog=load_catalog(catalog_file) if catalog_file.exists() else None))
 
     # Queue order, same as the dashboard's: worst tier, then P(crit), then
     # forecast risk, then soonest TCA (withheld events have no P(crit): last in tier)
@@ -230,7 +240,46 @@ def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:
     if not known["forecast_in_sample"].any():
         results["queue_depth"] = _queue_depth(known)
     results.update(holdout_metrics())
+    if "tier_true" in ev and ev["tier_true"].notna().any():
+        results["test_lockbox"] = lockbox_metrics(ev)
     return results
+
+
+def attach_lockbox(ev: pd.DataFrame, path: Path = LOCKBOX_PATH) -> pd.DataFrame:
+    """LOCKBOX: the published final CDMs of the test events (Kelvins, Zenodo 4463683, CC BY 4.0).
+
+    Used only to SCORE the already-frozen model, after everything else is fixed. Never read by
+    training, calibration, threshold choice or model selection. Adds tier_true / risk_true /
+    miss_true on test rows; NaN elsewhere, or everywhere when the file isn't there.
+    """
+    ev = ev.assign(tier_true=None, risk_true=np.nan, miss_true=np.nan)
+    if not path.exists():
+        return ev
+    truth = pd.read_csv(path, usecols=["event_id", "time_to_tca", "risk", "miss_distance"])
+    final = truth.sort_values("time_to_tca").groupby("event_id").first()   # last CDM before TCA
+    test = ev["split"] == "test"
+    ids = ev.loc[test, "event_id"]
+    ev.loc[test, "risk_true"] = ids.map(final["risk"]).to_numpy()
+    ev.loc[test, "miss_true"] = ids.map(final["miss_distance"]).to_numpy()
+    known = test & ev["risk_true"].notna()
+    ev.loc[known, "tier_true"] = tier_array(ev.loc[known, "risk_true"], ev.loc[known, "miss_true"])
+    return ev
+
+
+def lockbox_metrics(ev: pd.DataFrame) -> dict:
+    """Frozen model vs the latest-risk baseline on the lockbox test labels. Risk predictions
+    below -6 are clipped to -6.001, as in the Kelvins competition's scoring."""
+    from src.metrics import confusion, evaluate
+    t = ev[ev["tier_true"].notna()]
+    clip = lambda r: np.where(r < -6, -6.001, r)  # noqa: E731
+    return {
+        "n": int(len(t)),
+        "note": "lockbox: published test labels, scored once on the frozen model; never used to train or tune",
+        "baseline": {**evaluate(t["risk_true"], t["miss_true"], clip(t["risk_latest"]), t["tier_now"]),
+                     "confusion": confusion(t["tier_true"], t["tier_now"])},
+        "model": {**evaluate(t["risk_true"], t["miss_true"], clip(t["risk_forecast"]), t["tier_final"]),
+                  "confusion": confusion(t["tier_true"], t["tier_final"])},
+    }
 
 
 def holdout_metrics(path: Path = HOLDOUT_PATH) -> dict:
@@ -278,7 +327,7 @@ def main():
     cdms = load_all()
     cdms[CDM_COLS].to_parquet(PROCESSED_DIR / "cdms.parquet", index=False)
 
-    ev = score(cdms)
+    ev = attach_lockbox(score(cdms))  # the model is frozen before the lockbox labels are read
     ev.to_parquet(PROCESSED_DIR / "events_scored.parquet", index=False)
     log.info("scored %d events (%s); tier_final counts: %s", len(ev),
              ev["forecast_source"].iat[0],

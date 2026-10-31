@@ -99,3 +99,24 @@ def test_holdout_metrics_blocks(tmp_path):
     assert m["holdout"]["baseline"]["recall"]["CRITICAL"] == 0.5
     hard = m["holdout_forecast_only"]
     assert hard["n"] == 2 and hard["baseline"]["recall"]["CRITICAL"] == 0.0   # event 2 (final 3 d out) excluded
+
+
+def test_lockbox_scores_only_test_rows(tmp_path):
+    ev = pd.DataFrame({"split": ["test", "test", "train"], "event_id": [1, 2, 1],
+                       "risk_latest": [-5.0, -30.0, -3.0], "risk_forecast": [-3.5, -30.0, -3.0],
+                       "tier_now": ["ELEVATED", "SAFE", "CRITICAL"], "tier_final": ["CRITICAL", "SAFE", "CRITICAL"]})
+    assert score_mod.attach_lockbox(ev, tmp_path / "missing.csv")["tier_true"].isna().all()
+    path = tmp_path / "private.csv"
+    pd.DataFrame({"event_id": [1, 1, 2], "time_to_tca": [3.0, 0.4, 0.2],
+                  "risk": [-7.0, -3.2, -30.0], "miss_distance": [9_000, 800, 20_000]}).to_csv(path, index=False)
+    out = score_mod.attach_lockbox(ev, path)
+    assert list(out.tier_true) == ["CRITICAL", "SAFE", None]       # last CDM per event; train rows untouched
+    m = score_mod.lockbox_metrics(out)
+    assert m["n"] == 2 and m["model"]["confusion"]["recall"]["CRITICAL"] == 1.0
+    assert m["baseline"]["confusion"]["recall"]["CRITICAL"] == 0.0
+
+
+def test_hard_subset_flag():
+    ev = _score([_cdm(1, 3.0, -8.0, 9_000), _cdm(1, 0.5, -8.0, 9_000), _cdm(2, 3.0, -8.0, 9_000),
+                 _cdm(2, 2.5, -8.0, 9_000)])
+    assert bool(ev.loc[1, "hard_subset"]) and not bool(ev.loc[2, "hard_subset"])
