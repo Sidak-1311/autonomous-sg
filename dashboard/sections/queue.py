@@ -1,4 +1,6 @@
 """Operations queue: the triage list, worst first, and the alert-fatigue curve."""
+from html import escape
+
 from dashboard.sections.common import *  # noqa: F401,F403  (helpers, st, np, pd, px, go, style, brief)
 
 # Shown by default; the rest stays in the table's data (and in Event detail) without crowding the view.
@@ -17,35 +19,78 @@ def render(ctx):
                 f'<b>{n_review:,}</b> have too little evidence to forecast and stay here whatever their tier.</p>',
                 unsafe_allow_html=True)
 
-    shown_rows = queue.head(TABLE_ROWS)
-    st.markdown(style.html_table(shown_rows, TABLE_COLUMNS, max_height=640, rank=True, foot=(
-        f"<span>Showing {len(shown_rows):,} of {len(queue):,} · worst first</span>"
-        "<span>Open any event in 02 Event detail</span>")), unsafe_allow_html=True)
+    filtered = _filter(queue)
+    shown_rows = filtered.head(TABLE_ROWS)
+    if filtered.empty:
+        st.markdown(style.card('<span class="dim">No queued events match these filters.</span>'),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(style.html_table(shown_rows, TABLE_COLUMNS, max_height=640, rank=True, foot=(
+            f"<span>Showing {len(shown_rows):,} of {len(filtered):,}"
+            f"{f' (filtered from {len(queue):,})' if len(filtered) < len(queue) else ''} · worst first</span>"
+            "<span>Open any event in 02 Event detail</span>")), unsafe_allow_html=True)
 
     with st.expander("Export or sort the full queue as a grid"):
-        _grid(queue)
+        _grid(filtered)
 
 
 TABLE_ROWS = 300
+DECISIONS = ["Undecided", "Maneuver", "Monitor", "Dismiss"]
 
 
-def _flags(_, r) -> str:
-    flags = [style.chip("Review") if r.needs_review else "", style.chip("Storm", on=False) if r.storm_flips else "",
+def _filter(queue):
+    """Filters on the table itself. An empty pill selection means 'no filter on that field'."""
+    with st.container(key="queue-filters"):
+        f = st.columns([2.8, 3.6, 4.6, 5.2], gap="large", vertical_alignment="top")
+        search = f[0].text_input("Find event", placeholder="Event ID", key="queue_search")
+        review_only = f[0].toggle("Review only", key="queue_review",
+                                  help="Only events with too little evidence to forecast")
+        tiers = f[1].pills("Tier", [CRITICAL, ELEVATED, SAFE], selection_mode="multi", key="queue_tier")
+        decisions = f[2].pills("Decision", DECISIONS, selection_mode="multi", key="queue_decision")
+        objects = sorted(queue.c_object_type.dropna().unique())
+        picked = f[3].pills("Object", objects, selection_mode="multi", key="queue_object",
+                            format_func=lambda o: str(o).title())
+    out = queue
+    if search.strip():
+        out = out[out.event_id.astype(str).str.contains(search.strip(), regex=False)]
+    if tiers:
+        out = out[out.tier_final.isin(tiers)]
+    if decisions:
+        out = out[out.decision.replace("", "Undecided").isin(decisions)]
+    if picked:
+        out = out[out.c_object_type.isin(picked)]
+    if review_only:
+        out = out[out.needs_review.astype(bool)]
+    return out
+
+
+def _why(v, r) -> str:
+    """The reason's first clause in the table (the rule or the refusal); the full text on hover."""
+    text = v if isinstance(v, str) else ""
+    head = text.split(" (")[0] if text.startswith("INSUFFICIENT") else text.split(";")[0]
+    return f'<span class="why" title="{escape(text)}">{escape(head)}</span>'
+
+
+def _event(v, r) -> str:
+    """Event id, with the signed decision and its flags (review / storm-sensitive / σ-limited)
+    as small chips underneath."""
+    flags = [style.chip(f"✓ {r.decision}") if r.decision else "",
+             style.chip("Review") if r.needs_review else "", style.chip("Storm", on=False) if r.storm_flips else "",
              style.chip("σ-limited", on=False) if r.pc_diluted else ""]
-    return "".join(flags) or '<span class="dim">—</span>'
+    chips = "".join(flags)
+    return f'<span class="strong">{v}</span>' + (f'<span class="sub">{chips}</span>' if chips else "")
 
 
 TABLE_COLUMNS = [
-    ("event_id", "Event", "l", lambda v, r: f'<span class="strong">{v}</span>'),
+    ("event_id", "Event", "l", _event),
     ("tier_final", "Tier", "l", lambda v, r: style.tier_pill(v)),
     ("p_critical", "P(Critical at TCA)", "l", lambda v, r: style.prob_bar(v)),
-    ("risk_latest", "Pc now", "r", lambda v, r: format_pc(v)),
-    ("risk_hi", "Pc at TCA · 95% bound", "r", lambda v, r: f'<span class="dim">{format_pc(v)}</span>'),
+    ("risk_latest", "Pc now · 95% bound at TCA", "r",
+     lambda v, r: f'{format_pc(v)}<span class="sub">≤ {format_pc(r.risk_hi)} at TCA</span>'),
     ("miss_latest_m", "Miss now", "r", lambda v, r: format_miss(v)),
     ("time_to_tca", "Time to TCA", "r", lambda v, r: format_ttca(v)),
     ("c_object_type", "Object", "l", lambda v, r: f'<span class="dim">{str(v).title()}</span>'),
-    (None, "Flags", "l", _flags),
-    ("decision", "Decision", "l", lambda v, r: v if v else '<span class="dim">—</span>'),
+    ("reason", "Why", "l", _why),
 ]
 
 

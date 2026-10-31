@@ -163,6 +163,34 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
 .bm-table-foot {{ display: flex; justify-content: space-between; padding-top: 0.7rem; font: 600 0.66rem {FONT};
   letter-spacing: 0.08em; text-transform: uppercase; color: {MUTED}; }}
 
+.st-key-queue-filters [data-testid="stButtonGroup"] > div {{ flex-wrap: wrap; row-gap: 0.4rem; }}
+.st-key-queue-filters [data-testid="stCheckbox"] {{ margin-top: 0.35rem; }}
+.st-key-queue-filters [data-testid="stCheckbox"] label p {{ text-transform: none; letter-spacing: 0;
+  font: 500 0.82rem {FONT} !important; color: {TEXT} !important; }}
+.st-key-queue-filters [data-testid="stCheckbox"] label {{ white-space: nowrap; }}
+.st-key-queue-filters [data-testid="stCheckbox"] label p {{ overflow: visible !important; }}
+.bm-table td, .bm-table thead th {{ padding-left: 0.7rem; padding-right: 0.7rem; }}
+.bm-table .sub {{ display: block; font-size: 0.72rem; color: {MUTED}; margin-top: 0.15rem; }}
+.bm-bar {{ min-width: 7.5rem !important; }}
+.bm-table td:has(.why) {{ white-space: normal; min-width: 13rem; }}
+.bm-table .why {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3;
+  white-space: normal; max-width: 16rem; overflow: hidden;
+  vertical-align: middle; color: {MUTED}; font-size: 0.84rem; cursor: help; }}
+
+/* queue filter row: small uppercase labels, pills as filter chips */
+.st-key-queue-filters {{ padding: 0.4rem 0 1.1rem; }}
+.st-key-queue-filters label p {{ font: 600 0.66rem {FONT} !important; letter-spacing: 0.09em;
+  text-transform: uppercase; color: {MUTED} !important; }}
+.st-key-queue-filters [data-testid="stBaseButton-pills"],
+.st-key-queue-filters [data-testid="stBaseButton-pillsActive"] {{ border-radius: 999px !important;
+  padding: 0.25rem 0.8rem !important; min-height: 0 !important; font: 600 0.72rem {FONT}; }}
+.st-key-queue-filters [data-testid="stBaseButton-pills"] {{ background: transparent !important;
+  border: 1px solid {LINE} !important; color: {MUTED} !important; }}
+.st-key-queue-filters [data-testid="stBaseButton-pillsActive"] {{ background: {TEXT} !important;
+  border: 1px solid {TEXT} !important; }}
+.st-key-queue-filters [data-testid="stBaseButton-pillsActive"] * {{ color: {BG} !important; }}
+.st-key-queue-filters input {{ font-feature-settings: "tnum" 1; }}
+
 /* buttons: solid white pills with dark text (the white primary made text vanish) */
 .stButton button, [data-testid="stFormSubmitButton"] button {{ background: {TEXT} !important;
   border: none !important; border-radius: 999px !important; padding: 0.5rem 1.4rem !important; }}
