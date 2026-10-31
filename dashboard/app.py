@@ -5,6 +5,7 @@ Reads only the pipeline's output (DATA CONTRACT in the room): data/processed/eve
 data/processed/cdms.parquet, written by `python -m src.score`. Until they exist it builds a stub with the
 same columns from data/test_data.csv (latest CDM as the forecast, no model). DATA_DIR overrides data/.
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,7 +18,8 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from src.physics import combined_sigma, dilution  # noqa: E402
+from src.physics import LEO_MEAN_MOTION, combined_sigma, dilution  # noqa: E402
+from src.score import _add_maneuver  # noqa: E402  (the pipeline's own maneuver rule, reused by the stub)
 from src.tiering import (  # noqa: E402
     CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, RISK_CRITICAL, RISK_ELEVATED, RISK_FLOOR, SAFE,
     TIER_COLORS, TIER_RANK, TIERS, rule_fired, tier_array,
@@ -47,6 +49,7 @@ def stub_from_raw(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
                    tier_actual=None)
     ev["pc_diluted"], ev["risk_potential"] = dilution(ev.risk_latest, ev.miss_latest_m,
                                                       combined_sigma(ev.c_sigma_r, ev.t_sigma_r))
+    _add_maneuver(ev)
     return ev.reset_index(drop=True), cdms
 
 
@@ -59,6 +62,8 @@ def load(data_dir: str, stamp: tuple) -> tuple[pd.DataFrame, pd.DataFrame, str]:
         sources = ", ".join(sorted(events.forecast_source.dropna().unique()))
         if "pc_diluted" not in events:  # pipeline output from before the dilution flag
             events = events.assign(pc_diluted=False, risk_potential=events.risk_latest)
+        if "maneuver_dr_m" not in events:  # ... or the maneuver suggestion
+            events = events.assign(maneuver_dr_m=np.nan, maneuver_dv_mps=np.nan)
         return events, cdms, f"pipeline output ({sources})"
     events, cdms = stub_from_raw(DATA / "test_data.csv")
     return events, cdms, "stub from test_data.csv (no pipeline output yet)"
@@ -67,6 +72,35 @@ def load(data_dir: str, stamp: tuple) -> tuple[pd.DataFrame, pd.DataFrame, str]:
 def stamp() -> tuple:
     files = [PROCESSED / "events_scored.parquet", PROCESSED / "cdms.parquet", DATA / "test_data.csv"]
     return tuple(f.stat().st_mtime if f.exists() else None for f in files)
+
+
+def load_metrics() -> dict | None:
+    path = PROCESSED / "metrics.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+# metric -> (label, higher is better)
+METRICS = {"recall_critical": ("Critical recall", True), "precision_critical": ("Critical precision", True),
+           "f2": ("F2 (high risk)", True), "mse_hr": ("MSE on high-risk events", False), "loss": ("loss = MSE / F2", False)}
+
+
+def metrics_table(metrics: dict) -> pd.DataFrame:
+    """One row per metric: value and 95% CI for each scorer present (baseline, model), and which is better."""
+    def ci(run, key):
+        lo_hi = run.get("ci95", {}).get(key)
+        return f"[{lo_hi[0]:.3g}, {lo_hi[1]:.3g}]" if lo_hi else "—"
+
+    rows = []
+    for key, (label, higher) in METRICS.items():
+        row = {"metric": label}
+        for name in ("baseline", "model"):
+            if name in metrics and key in metrics[name]:
+                row[name], row[f"{name} 95% CI"] = metrics[name][key], ci(metrics[name], key)
+        if "baseline" in row and "model" in row:
+            better = row["model"] > row["baseline"] if higher else row["model"] < row["baseline"]
+            row["model better?"] = "yes" if better else "no"
+        rows.append(row)
+    return pd.DataFrame(rows).set_index("metric")
 
 
 def queue_order(df: pd.DataFrame) -> pd.DataFrame:
@@ -109,8 +143,8 @@ for col, t in zip(k[1:], reversed(TIERS)):
     col.metric(t.title(), f"{counts.get(t, 0):,}")
 st.caption(f"{counts.get(CRITICAL, 0):,} events need a maneuver (CRITICAL: Pc ≥ 1e-4 or miss < 1 km at TCA).")
 
-queue_tab, detail_tab, fleet_tab, window_tab = st.tabs(
-    ["Operations queue", "Event detail", "Fleet overview", "Next 24 hours"])
+queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
+    ["Operations queue", "Event detail", "Fleet overview", "Next 24 hours", "Evaluation"])
 
 with queue_tab:
     queue = queue_order(shown[shown.tier_final != SAFE])
@@ -155,6 +189,16 @@ with detail_tab:
         text = lambda v: v if isinstance(v, str) else ""  # parquet gives None/NaN for missing strings
         st.markdown(f"**{e.tier_final}** · {e.c_object_type} · {text(e.reason)}"
                     + (f"  \nDrivers: {e.drivers}" if text(e.drivers) else ""))
+        if pd.notna(e.maneuver_dr_m):  # the pipeline plans one for CRITICAL events only
+            if e.maneuver_dr_m == 0:
+                st.info("Suggested maneuver: none from geometry. The separation already clears the rules, so "
+                        "the Critical tier comes from the forecast; an analyst decides.")
+            else:
+                half_orbit = np.pi / LEO_MEAN_MOTION / 60
+                st.warning(f"Suggested maneuver: shift radial separation by {abs(e.maneuver_dr_m):,.0f} m "
+                           f"({'outward' if e.maneuver_dr_m > 0 else 'inward'}), an along-track burn of about "
+                           f"{e.maneuver_dv_mps * 100:.1f} cm/s roughly {half_orbit:.0f} min (half an orbit) "
+                           "before TCA. A first-order suggestion for the analyst to verify, not a command.")
 
         a, b = st.columns(2)
         risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Risk per CDM update")
@@ -212,6 +256,23 @@ with fleet_tab:
                         labels={y: "Risk, log10(Pc)", "tier_final": "tier"})
     hist.add_annotation(x=RISK_FLOOR, y=0, yanchor="bottom", text="floor: Pc ≈ 0", showarrow=False)
     right.plotly_chart(hist, width="stretch")
+
+with eval_tab:
+    st.subheader("Baseline vs model (cross-validated on train events)")
+    metrics = load_metrics()
+    if metrics is None:
+        st.info("No data/processed/metrics.json yet. Run `python -m src.score` to measure the baseline.")
+    else:
+        table = metrics_table(metrics)
+        st.dataframe(table, width="stretch", column_config={
+            name: st.column_config.NumberColumn(name, format="%.3f") for name in ("baseline", "model")})
+        run = metrics.get("model") or metrics.get("baseline") or {}
+        st.caption(f"{run.get('n_critical', '?'):,} actual Critical events among {run.get('n_events', '?'):,}. "
+                   "Baseline: the latest CDM's risk carried to TCA. 95% CIs bootstrap over events. "
+                   "Lower is better for MSE and loss.")
+        if "model" not in metrics:
+            st.info("No trained model yet, so these are baseline numbers only. "
+                    "The forecaster's full training run is waiting for the team's go-ahead.")
 
     # Pc dilution is shown as a hypothesis tested against outcomes, not as a warning: on the training data
     # it does not predict danger, and the dashboard says so whenever the outcomes show it.
