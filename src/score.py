@@ -18,7 +18,7 @@ from src.cascade import COLUMNS as CASCADE_OUT
 from src.features import build_event_table
 from src.ingest import CASCADE_COLUMNS, COLUMNS, PROCESSED_DIR, load_all
 from src.physics import combined_sigma, dilution, radial_maneuver
-from src.tiering import (CRITICAL, TIERS, format_miss, format_pc, format_prob, rule_fired,
+from src.tiering import (CRITICAL, RISK_FLOOR, TIERS, format_miss, format_pc, format_prob, rule_fired,
                          tier_array, worse)
 
 log = logging.getLogger(__name__)
@@ -117,7 +117,10 @@ def _reason(row, threshold: float) -> str:
         # 5% of outcomes fall above it: a one-sided 95% upper bound. The lower end
         # is uninformative (many events collapse to the -30 floor), so omit it.
         text += f"; 95% upper bound on Pc at TCA: {format_pc(row.risk_hi)}"
-    if abs(row.risk_slope) >= 0.1 and row.n_cdms > 1:
+    if row.n_cdms > 1 and getattr(row, "risk_min", 0) <= RISK_FLOOR:
+        # -30 is a placeholder (Pc too small to compute), not a value, so a fitted rate is an artefact
+        text += "; Pc at the uncomputable floor (−30 placeholder) in this window, so no trend rate is quoted"
+    elif abs(row.risk_slope) >= 0.1 and row.n_cdms > 1:
         direction = "rising" if row.risk_slope > 0 else "falling"
         text += f"; Pc {direction} {abs(row.risk_slope):.1f} orders of magnitude per day"
     return text
@@ -235,12 +238,23 @@ def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:
     results = {"baseline": evaluate(known["risk_final"], known["miss_final_m"],
                                     known["risk_latest"], known["tier_now"])}
     cv_path = MODEL_PATH.with_name("cv_metrics.json")
-    if cv_path.exists():
+    out_of_fold = not known["forecast_in_sample"].any()
+    if out_of_fold and (known["forecast_source"] != "baseline").any():
+        # As deployed: train rows carry out-of-fold forecasts, and refused events keep tier_now
+        results["model"] = {**evaluate(known["risk_final"], known["miss_final_m"],
+                                       known["risk_forecast"], known["tier_final"]),
+                            "note": "as deployed: out of fold, forecasts withheld on needs_review events"}
+        if cv_path.exists():
+            results["model_all_events"] = {**json.loads(cv_path.read_text()),
+                                           "note": "out of fold, model tier applied to every event "
+                                                   "(no refusals): not what the dashboard issues"}
+    elif cv_path.exists():
         # Model scores on train would be in-sample; report out-of-fold CV instead
         results["model"] = json.loads(cv_path.read_text())
-    if not known["forecast_in_sample"].any():
+    if out_of_fold:
         results["queue_depth"] = _queue_depth(known)
-    results.update(holdout_metrics())
+    train = ev[ev["split"] == "train"]
+    results.update(holdout_metrics(review_ids=set(train.loc[train["needs_review"].astype(bool), "event_id"])))
     if "tier_true" in ev and ev["tier_true"].notna().any():
         results["test_lockbox"] = lockbox_metrics(ev)
     return results
@@ -287,7 +301,7 @@ def lockbox_metrics(ev: pd.DataFrame) -> dict:
     }
 
 
-def holdout_metrics(path: Path = HOLDOUT_PATH) -> dict:
+def holdout_metrics(path: Path = HOLDOUT_PATH, review_ids: set | None = None) -> dict:
     """Confusion matrices on the fixed 80/20 event_id holdout (train.py writes the predictions).
 
     'holdout' covers every held-out event. 'holdout_forecast_only' keeps events whose final CDM
@@ -299,11 +313,15 @@ def holdout_metrics(path: Path = HOLDOUT_PATH) -> dict:
     from src.metrics import confusion
     hold = pd.read_parquet(path)
     hold = hold[hold["tier_actual"].notna()]
+    # As deployed: on refused (needs_review) events no forecast is issued, so the tier is tier_now
+    refused = hold["event_id"].isin(review_ids or set())
+    hold = hold.assign(tier_issued=hold["tier_final"].where(~refused, hold["tier_now"]))
 
     def block(df, note):
-        return {"n": int(len(df)), "note": note,
+        return {"n": int(len(df)), "note": note, "n_refused": int(df["event_id"].isin(review_ids or set()).sum()),
                 "baseline": confusion(df["tier_actual"], df["tier_now"]),
-                "model": confusion(df["tier_actual"], df["tier_final"])}
+                "model": confusion(df["tier_actual"], df["tier_issued"]),
+                "model_before_refusals": confusion(df["tier_actual"], df["tier_final"])}
 
     out = {"holdout": block(hold, "all held-out events (organisers' usable set), 20% by event_id")}
     if "final_ttca" in hold:

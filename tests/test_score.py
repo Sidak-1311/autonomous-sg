@@ -123,3 +123,20 @@ def test_hard_subset_flag():
     ev = _score([_cdm(1, 3.0, -8.0, 9_000), _cdm(1, 0.5, -8.0, 9_000), _cdm(2, 3.0, -8.0, 9_000),
                  _cdm(2, 2.5, -8.0, 9_000)])
     assert bool(ev.loc[1, "hard_subset"]) and not bool(ev.loc[2, "hard_subset"])
+
+
+def test_holdout_applies_refusals_as_deployed(tmp_path):
+    path = tmp_path / "holdout_predictions.parquet"
+    pd.DataFrame({"event_id": [1, 2], "tier_actual": ["CRITICAL", "CRITICAL"],
+                  "tier_now": ["SAFE", "SAFE"], "tier_final": ["CRITICAL", "CRITICAL"],
+                  "final_ttca": [0.5, 0.5]}).to_parquet(path)
+    m = score_mod.holdout_metrics(path, review_ids={2})          # event 2 is refused: no forecast issued
+    assert m["holdout"]["model"]["recall"]["CRITICAL"] == 0.5
+    assert m["holdout"]["model_before_refusals"]["recall"]["CRITICAL"] == 1.0
+    assert m["holdout"]["n_refused"] == 1
+
+
+def test_no_trend_rate_through_the_floor_placeholder():
+    ev = _score([_cdm(1, 4.0, -8.0, 9_000), _cdm(1, 3.0, -30.0, 9_000), _cdm(1, 2.2, -30.0, 9_000)])
+    reason = ev.loc[1, "reason"]
+    assert "orders of magnitude per day" not in reason and "−30 placeholder" in reason
