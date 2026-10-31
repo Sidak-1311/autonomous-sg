@@ -135,6 +135,13 @@ header[data-testid="stHeader"] {{ height: 0; min-height: 0; }}
   text-transform: uppercase; }}
 .st-key-kpis [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
 
+/* buttons: solid white pills with dark text (the white primary made text vanish) */
+.stButton button, [data-testid="stFormSubmitButton"] button {{ background: {TEXT} !important;
+  border: none !important; border-radius: 999px !important; padding: 0.5rem 1.4rem !important; }}
+.stButton button *, [data-testid="stFormSubmitButton"] button * {{ color: {BG} !important;
+  font: 600 0.8rem {FONT} !important; letter-spacing: 0.06em; text-transform: uppercase; }}
+.stButton button:hover, [data-testid="stFormSubmitButton"] button:hover {{ background: {ACCENT} !important; }}
+
 /* tabs become a sticky top nav */
 .stTabs [data-baseweb="tab-list"] {{ position: sticky; top: 0; z-index: 50; background: {BG};
   padding-top: 0.4rem; margin-top: 1.8rem; }}
