@@ -28,8 +28,21 @@ def test_miss_axis_is_log_with_metre_and_km_labels():
 
 
 def test_template_is_default_and_uses_the_tier_palette():
-    assert pio.templates.default == "plotly_dark+interstellar"
-    assert pio.templates["interstellar"].layout.colorway[-1] == TIER_COLORS[CRITICAL]
+    assert pio.templates.default == "plotly_dark+triage"
+    assert pio.templates["triage"].layout.colorway[-1] == TIER_COLORS[CRITICAL]
+
+
+def test_interface_accent_never_doubles_as_a_tier_colour():
+    assert style.ACCENT.lower() not in {c.lower() for c in TIER_COLORS.values()}
+
+
+def test_layout_helpers():
+    assert 'class="idx">01<' in style.section("01", "Operations queue")
+    assert ">Operations queue<" in style.section("01", "Operations queue")
+    hero = style.hero_stat("394", "Critical", CRITICAL)
+    assert ">394<" in hero and TIER_COLORS[CRITICAL] in hero and ">Critical<" in hero
+    assert style.TEXT in style.hero_stat("2,167", "Events")   # uncoloured when not a tier count
+    assert style.card("<b>x</b>").startswith('<div class="bm-card">')
 
 
 def test_pill_always_carries_the_tier_as_text():

@@ -1,27 +1,28 @@
-# Interstellar theme for the dashboard (run from the repo root: streamlit run dashboard/app.py).
-# Tier colours live in src/tiering.py TIER_COLORS; nothing here may look like a tier.
+# Dashboard theme (run from the repo root: streamlit run dashboard/app.py).
+# Near-black + one yellow interface accent, one tight grotesk. Tier colours live in
+# src/tiering.py TIER_COLORS; the yellow accent never encodes data.
 [theme]
 base = "dark"
-primaryColor = "#C9D1E6"              # starlight: neutral, so no control reads as a tier
-backgroundColor = "#05070D"           # the void
-secondaryBackgroundColor = "#0C1322"
-textColor = "#E6EAF2"
-borderColor = "#1C2638"
-dataframeBorderColor = "#1C2638"
-dataframeHeaderBackgroundColor = "#0C1322"
-linkColor = "#C9D1E6"
-redColor = "#F2386F"
-orangeColor = "#F5C04E"
-yellowColor = "#F5C04E"
-blueColor = "#8E9BB8"                 # info boxes stay grey-blue, unlike SAFE steel blue
-greenColor = "#6FBFA8"
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
-headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap"
+primaryColor = "#FFD600"              # interface accent only: tabs, sliders, active states
+backgroundColor = "#101010"
+secondaryBackgroundColor = "#1A1A1A"
+textColor = "#F2F2F2"
+borderColor = "#262626"
+dataframeBorderColor = "#262626"
+dataframeHeaderBackgroundColor = "#161616"
+linkColor = "#FFD600"
+redColor = "#F2386F"                  # = CRITICAL
+orangeColor = "#FF8A3D"               # = ELEVATED
+yellowColor = "#FFD600"
+blueColor = "#8A8A8A"                 # info boxes stay grey, unlike SAFE steel blue
+greenColor = "#8A8A8A"
+font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;800&display=swap"
+headingFont = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;800&display=swap"
 codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap"
-headingFontWeights = [700, 600, 600, 500, 500, 500]
-baseRadius = "10px"
-showWidgetBorder = true
+headingFontWeights = [800, 800, 600, 600, 600, 600]
+baseRadius = "12px"
+showWidgetBorder = false
 
 [theme.sidebar]
-backgroundColor = "#080C16"
-secondaryBackgroundColor = "#0C1322"
+backgroundColor = "#0C0C0C"
+secondaryBackgroundColor = "#1A1A1A"
