@@ -70,6 +70,12 @@ def queue(at: AppTest) -> pd.DataFrame:
     return at.dataframe[0].value
 
 
+def page_text(at: AppTest) -> str:
+    """Everything the page says: markdown cards, alerts and captions (layouts move text between them)."""
+    return "\n".join(e.value for kind in (at.markdown, at.info, at.warning, at.error, at.success, at.caption)
+                     for e in kind)
+
+
 def stub_dir(tmp_path: Path, raw: pd.DataFrame = RAW) -> Path:
     raw.to_csv(tmp_path / "test_data.csv", index=False)
     return tmp_path
@@ -89,7 +95,7 @@ def test_stub_tiers_follow_the_rules_at_the_thresholds(tmp_path, monkeypatch):
     assert any(c.value.startswith("1 of 5 events are flagged") for c in at.caption)  # event 4
     assert any("can't be checked" in i.value for i in at.info)  # test data: no outcomes, no verdict
     assert any("No data/processed/metrics.json" in i.value for i in at.info)
-    assert any(w.value.startswith("Suggested maneuver") for w in [*at.warning, *at.info])  # event 0 is CRITICAL
+    assert "Suggested maneuver" in page_text(at)  # event 0 is CRITICAL
 
 
 def by_label(elements, label):
@@ -135,15 +141,16 @@ def test_pipeline_output_with_missing_model_columns(tmp_path, monkeypatch):
     assert "pipeline output (model)" in at.sidebar.caption[0].value
     # CRITICAL by p_critical (NaN last), then ELEVATED, then SAFE event 4 because it needs review
     assert list(queue(at).event_id) == [0, 3, 1, 4]
-    assert not any("Alert fatigue" in h.value for h in at.subheader)  # test split: outcomes unknown
+    assert "Alert fatigue needs known outcomes" in page_text(at)  # test split: outcomes unknown
     at.sidebar.selectbox[0].set_value("train").run()  # real outcomes drive the 24 h replay and the fatigue curve
     assert not at.exception, at.exception
     # Both actual Criticals (events 0 and 3) are the queue's first two rows.
     assert any("top 2 of 5" in c.value and "with the baseline ranking" in c.value for c in at.caption)
     assert any(w.value.startswith("In-sample") for w in at.warning)  # forecast_source == "model" on train
     # Flagged events 2 and 4 both ended SAFE: the dashboard must report the flag's failure, not praise it.
-    assert any("Measured failure" in w.value and "0.0% vs 66.7%" in w.value for w in at.warning)
-    assert not at.success
+    text = page_text(at)
+    assert "Measured failure: flagged events ended Critical no more often than the rest (0.0% vs 66.7%)" in text
+    assert "Not a failure here" not in text
 
 
 def test_brief_explains_the_selected_event(tmp_path, monkeypatch):
@@ -271,6 +278,35 @@ def test_no_queue_depth_no_headline(tmp_path, monkeypatch):
     assert not any(m.label.startswith("Fewer reviews") for m in at.metric)
 
 
+def test_event_header_strip(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    text = page_text(at)  # event 0: CRITICAL, Pc exactly on the threshold, miss 6,000 m, 2.1 days out
+    for shown in ("CRITICAL", "1.0×10⁻⁴", "6,000 m", "2 d 02 h", "90.0%", "Time to TCA",
+                  "95% upper bound on Pc at TCA"):
+        assert shown in text, shown
+    by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # needs review: no forecast numbers
+    assert page_text(at).count("withheld") == 2
+
+
+def test_evaluation_headline_compares_model_with_baseline(tmp_path, monkeypatch):
+    depth = {"model": 1198, "baseline": 1514, "reduction": 0.209, "ci95": {"reduction": [0.062, 0.373]}}
+    model = {**METRIC_RUN, "recall_critical": 0.95, "ci95": {"recall_critical": [0.93, 0.97]}}
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "model": model, "queue_depth": depth}),
+                monkeypatch)
+    text = page_text(at)
+    assert ">21%<" in text and "95% CI 6%–37%" in text
+    assert ">95.0%<" in text and "baseline 80.0% · 95% CI 93.0%–97.0%" in text
+    assert "risk forecaster did not beat" in text  # same MSE as the baseline: the fallback is a failure to show
+
+
+def test_no_regressor_failure_when_the_model_wins_or_is_absent(tmp_path, monkeypatch):
+    better = {**METRIC_RUN, "mse_hr": 5.0}
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN, "model": better}), monkeypatch)
+    assert "risk forecaster did not beat" not in page_text(at)
+    at = render(write_pipeline(tmp_path / "b", metrics={"baseline": METRIC_RUN}), monkeypatch)
+    assert "risk forecaster did not beat" not in page_text(at)
+
+
 def test_out_of_fold_train_rows_are_not_called_in_sample(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, train_in_sample=False), monkeypatch)
     at.sidebar.selectbox[0].set_value("train").run()
@@ -298,25 +334,27 @@ def test_pipeline_output_from_before_the_dilution_flag(tmp_path, monkeypatch):
     assert not queue(at).pc_diluted.any()
     at.sidebar.selectbox[0].set_value("train").run()
     assert not at.exception, at.exception
-    assert not any("Measured failure" in w.value for w in at.warning) and not at.success  # nothing flagged
+    text = page_text(at)  # nothing flagged, so no verdict either way
+    assert "Measured failure: flagged" not in text and "Not a failure here" not in text
 
 
 def test_maneuver_suggestion(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path), monkeypatch)
-    shift = [w.value for w in at.warning if w.value.startswith("Suggested maneuver")]
+    shift = [m.value for m in at.markdown if "Suggested maneuver" in m.value]
     assert len(shift) == 1 and "250 m (outward)" in shift[0] and "3.0 cm/s" in shift[0]  # event 0, worst first
     by_label(at.selectbox, "Event (worst first)").set_value(3).run()
-    assert any("none from geometry" in i.value for i in at.info)  # CRITICAL, but dr == 0
+    assert "None from geometry" in page_text(at)  # CRITICAL, but dr == 0
     by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # ELEVATED: no suggestion at all
-    assert not any("Suggested maneuver" in m.value for m in [*at.warning, *at.info])
-    assert any("Insufficient evidence: only one CDM" in m.value for m in at.error)  # and it needs review
+    text = page_text(at)
+    assert "Suggested maneuver" not in text
+    assert "Insufficient evidence" in text and "only one CDM" in text  # and it needs review
 
 
 def test_refusal_withholds_the_maneuver(tmp_path, monkeypatch):
     # Event 0 is CRITICAL with a 250 m plan, but on thin evidence: no plan may be shown.
     at = render(write_pipeline(tmp_path, review=(True, False, False, False, False)), monkeypatch)
-    assert any("Insufficient evidence" in m.value for m in at.error)
-    assert not any("Suggested maneuver" in m.value for m in [*at.warning, *at.info])
+    text = page_text(at)
+    assert "Insufficient evidence" in text and "Suggested maneuver" not in text
 
 
 def test_pipeline_output_from_before_the_refusal(tmp_path, monkeypatch):
@@ -327,7 +365,7 @@ def test_pipeline_output_from_before_the_refusal(tmp_path, monkeypatch):
 
 def test_pipeline_output_from_before_the_maneuver_columns(tmp_path, monkeypatch):
     at = render(write_pipeline(tmp_path, drop=("maneuver_dr_m", "maneuver_dv_mps")), monkeypatch)
-    assert not any("Suggested maneuver" in m.value for m in [*at.warning, *at.info])
+    assert "Suggested maneuver" not in page_text(at)
 
 
 METRIC_RUN = {"recall_critical": 0.8, "precision_critical": 0.8, "f2": 0.4, "mse_hr": 8.0, "loss": 20.0,
