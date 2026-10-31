@@ -16,9 +16,11 @@ when it doesn't know."
 - KPI (Key performance indicator) strip: 2,167 encounters; 246 Critical, 440 Elevated, 1,481 Safe
   archived; 150 on Watch and 91 need analyst review.
 - "Safe events leave the queue. Refusals never do, whatever their tier."
-- Point at the alert-fatigue curve: "To catch 95% of the dangerous events, today's
-  thresholds make you review 2,176 of 11,942 past events; ours, 1,402. That's about 36% fewer
-  reviews, measured out of fold; the 95% interval is 21 to 44%, so we quote it as a range."
+- Lead with reach: "On the hidden test set, 93% of the real Criticals land in front of an
+  analyst as Critical, Watch or a refusal; today's thresholds manage 83%."
+- Then the work saving, honestly: "Ranked by our model, catching 95% of Criticals took 36%
+  fewer reviews on past events, out of fold. On the unseen test events it's only 4% fewer
+  (493 vs 515), so the gain is in what reaches the analyst, not in less work."
 
 ## 0:55 to 1:35: a Critical event, **event 891**
 
