@@ -44,6 +44,12 @@ def test_facts_are_json_safe_and_limited_to_known_fields():
     json.dumps(sent)  # numpy types and NaN would fail here
 
 
+def test_the_uninformative_lower_bound_is_never_sent():
+    assert "risk_lo" not in brief.facts({**EVENT, "risk_lo": -30.0, "risk_hi": -22.1})
+    assert "95% upper bound" in brief.PROMPT and "90% interval" not in brief.PROMPT
+    assert "never print the log value" in brief.PROMPT
+
+
 def test_refusal_only_when_evidence_is_thin():
     assert brief.refusal(EVENT) is None
     why = brief.refusal({**EVENT, "needs_review": True, "review_reason": "only one CDM"})
