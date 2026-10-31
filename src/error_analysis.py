@@ -1,14 +1,15 @@
 """Why the triage misses Criticals and raises false alarms.
 
-    .venv/bin/python -m src.error_analysis [--holdout models/holdout_ids.json] [--lockbox]
+    .venv/bin/python -m src.error_analysis [--holdout | --lockbox]
 
 Reads data/processed/events_scored.parquet + cdms.parquet, takes the true final
 tier from the last train CDM (smallest time_to_tca, the organisers' definition),
 and compares it with the tier we issue at the 2-day decision point (tier_final).
 Every missed Critical gets one primary cause (first that applies, in CAUSES
 order) plus all flags that hold; the same for false alarms. Writes
-models/error_analysis.json. Pass --holdout (a JSON list of train event_ids) to
-restrict to a held-out split.
+models/error_analysis.json. --holdout uses the 80/20 model's predictions on the
+held-out 20% (models/holdout_predictions.parquet, the headline numbers);
+--lockbox scores the test split against the published Kelvins labels.
 """
 import argparse
 import json
@@ -24,6 +25,10 @@ PROCESSED = ROOT / "data" / "processed"
 OUT = ROOT / "models" / "error_analysis.json"
 LOCKBOX_PATH = ROOT / "data" / "external" / "kelvins" / "test_data_private.csv"
 LOCKBOX_OUT = ROOT / "models" / "error_analysis_lockbox.json"
+HOLDOUT_PRED = ROOT / "models" / "holdout_predictions.parquet"
+HOLDOUT_METRICS = ROOT / "models" / "holdout_metrics.json"
+HOLDOUT_OUT = ROOT / "models" / "error_analysis_holdout.json"
+PRED_COLS = ["tier_final", "p_critical", "risk_forecast", "miss_forecast_m"]
 
 CUTOFF_DAYS = 2.0
 JUMP_ORDERS = 2.0      # Pc rising by >= 2 orders of magnitude after the decision point
@@ -183,7 +188,8 @@ def analyse(ev: pd.DataFrame, finals: pd.DataFrame, threshold: float) -> dict:
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--holdout", type=Path, help="JSON list of held-out train event_ids")
+    ap.add_argument("--holdout", action="store_true",
+                    help="the 80/20 model's predictions on the held-out 20%% of train events")
     ap.add_argument("--lockbox", action="store_true",
                     help=f"score the test split against {LOCKBOX_PATH.relative_to(ROOT)} instead")
     ap.add_argument("--out", type=Path)
@@ -197,10 +203,14 @@ def main(argv=None):
         scope = "lockbox: Kelvins published test labels, frozen model, scoring only"
     else:
         ev = ev[ev["split"] == "train"]
-        if a.holdout:
-            ev = ev[ev["event_id"].isin(json.loads(a.holdout.read_text()))]
         finals, out = final_outcomes(pd.read_parquet(PROCESSED / "cdms.parquet")), a.out or OUT
-        scope = f"holdout ({a.holdout.name})" if a.holdout else "all train events (OOF where trained)"
+        scope = "all train events (OOF where trained)"
+        if a.holdout:
+            pred = pd.read_parquet(HOLDOUT_PRED)[["event_id", *PRED_COLS]]
+            ev = ev.drop(columns=PRED_COLS).merge(pred, on="event_id", how="inner")
+            threshold = float(json.loads(HOLDOUT_METRICS.read_text())["crit_threshold"])
+            out = a.out or HOLDOUT_OUT
+            scope = "holdout: 20% of train events by event_id, model fit on the other 80%"
     report = analyse(ev, finals, threshold)
     report["scope"] = scope
     out.write_text(json.dumps(report, indent=2, default=lambda x: None if x != x else x))
