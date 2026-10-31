@@ -43,3 +43,32 @@ def test_maneuver_on_exact_thresholds():
     # exactly 1 km and Pc exactly 1e-4: already clear, nothing to do
     dr, _ = radial_maneuver(-4.0, 1_000.0, 0.0, 1_000.0, 0.0, 100.0)
     assert dr == 0
+
+
+def test_dilution_flags_huge_covariance_only():
+    from src.physics import dilution
+    diluted, pot = dilution(np.array([-6.0, -6.0]), np.array([100.0, 2_000.0]),
+                            np.array([1_000.0, 50.0]))
+    assert list(diluted) == [True, False]
+    assert pot[0] > -6.0 and pot[0] <= 0.0   # sharper tracking raises Pc
+    assert pot[1] == -6.0                    # not diluted: unchanged
+
+
+def test_dilution_at_exact_peak_is_not_flagged():
+    from src.physics import dilution
+    d = 1_000.0
+    diluted, pot = dilution(-5.0, d, d / np.sqrt(2))
+    assert not diluted and pot == -5.0
+
+
+def test_dilution_handles_zero_miss_and_floor():
+    from src.physics import dilution
+    diluted, pot = dilution(-30.0, 0.0, 10.0)
+    assert np.isfinite(pot) and pot <= 0.0
+
+
+def test_dilution_ignores_tiny_gains():
+    from src.physics import dilution
+    d = 1_000.0
+    diluted, pot = dilution(-8.0, d, d / np.sqrt(2) * 1.05)  # just past the peak
+    assert not diluted and pot > -8.0

@@ -62,3 +62,26 @@ def radial_maneuver(risk_log10, miss_m, pos_r, pos_t, pos_n, sigma_m,
     dr = np.where(r >= 0, r_new - r, -r_new - r)
     dr = np.where(d_req <= miss, 0.0, dr)
     return dr, LEO_MEAN_MOTION * np.abs(dr) / 4
+
+
+# --- Pc dilution ------------------------------------------------------------
+
+def dilution(risk_log10, miss_m, sigma_m, min_gain=1.0):
+    """Is a low Pc only low because the covariance is large?
+
+    For fixed miss d, Pc(sigma) peaks at sigma* = d / sqrt(2). Beyond that,
+    better tracking (smaller sigma) would *raise* Pc. Returns (diluted,
+    risk_potential): risk_potential is the CDM's log10 Pc moved to sigma*,
+    using the short-encounter shape, and equals risk when not past the peak.
+    An event counts as diluted only if Pc could rise by >= min_gain orders.
+    """
+    risk = np.asarray(risk_log10, float)
+    d = np.maximum(np.asarray(miss_m, float), 1e-3)
+    s = np.maximum(np.asarray(sigma_m, float), 1e-3)
+    s_star = d / np.sqrt(2)
+
+    def shape(sig):  # log10 of the sigma-dependent part of Pc
+        return np.log10(1 / (2 * sig ** 2)) - d ** 2 / (2 * sig ** 2 * np.log(10))
+
+    potential = np.where(s > s_star, np.minimum(risk + shape(s_star) - shape(s), 0.0), risk)
+    return potential - risk >= min_gain, potential

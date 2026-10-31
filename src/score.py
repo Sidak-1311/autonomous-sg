@@ -15,7 +15,7 @@ import pandas as pd
 
 from src.features import build_event_table
 from src.ingest import COLUMNS, PROCESSED_DIR, load_all
-from src.physics import combined_sigma, radial_maneuver
+from src.physics import combined_sigma, dilution, radial_maneuver
 from src.tiering import CRITICAL, TIERS, rule_fired, tier_array, worse
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ EVENT_COLS = [
     "risk_slope", "risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical",
     "tier_now", "tier_forecast", "tier_final", "reason", "drivers", "forecast_source",
     "risk_final", "miss_final_m", "tier_actual",
-    "maneuver_dr_m", "maneuver_dv_mps",
+    "maneuver_dr_m", "maneuver_dv_mps", "pc_diluted", "risk_potential",
 ]
 
 
@@ -83,6 +83,14 @@ def _add_maneuver(ev: pd.DataFrame) -> None:
     ev["maneuver_dv_mps"] = np.where(critical, dv, np.nan)
 
 
+def _add_dilution(ev: pd.DataFrame) -> None:
+    """Flag events whose Pc is low only because tracking is poor."""
+    diluted, potential = dilution(ev["risk_latest"], ev["miss_latest_m"],
+                                  combined_sigma(ev["c_sigma_r"], ev["t_sigma_r"]))
+    ev["pc_diluted"] = diluted
+    ev["risk_potential"] = potential
+
+
 def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev = build_event_table(cdms)
     out = model_forecast(ev)
@@ -98,6 +106,10 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev["tier_final"] = [worse(a, b) for a, b in zip(ev["tier_now"], ev["tier_forecast"])]
     ev["reason"] = [_reason(r) for r in ev.itertuples()]
     _add_maneuver(ev)
+    _add_dilution(ev)
+    ev.loc[ev["pc_diluted"], "reason"] += [
+        f"; Pc diluted by large covariance (could reach 1e{p:.1f} with sharper tracking)"
+        for p in ev.loc[ev["pc_diluted"], "risk_potential"]]
 
     # Queue order: worst tier, then highest forecast risk, then soonest TCA
     ev["_rank"] = ev["tier_final"].map({t: i for i, t in enumerate(TIERS)})
