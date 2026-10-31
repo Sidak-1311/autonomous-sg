@@ -3,17 +3,20 @@ visible failures (the Pc-dilution flag and the risk regressor), each measured, n
 from dashboard.sections.common import *  # noqa: F401,F403  (helpers, st, np, pd, px, go, style, brief)
 
 
-def big_card(value: str, caption: str, detail: str, min_height: str = "13.5rem") -> str:
-    """min_height lines up a row whose details differ in length; pass '' to fit the content."""
-    size = f"min-height:{min_height}" if min_height else ""
-    return (f'<div class="bm-card" style="{size}"><div class="bm-hero"><span class="num" style="font-size:clamp(2.6rem,4.5vw,4.6rem)">'
-            f'{value}</span>{style.label(caption)}</div><div style="color:{style.MUTED};margin-top:0.7rem;'
-            f'font-size:0.9rem">{detail}</div></div>')
+def big_card(value: str, caption: str, detail: str, *_) -> str:
+    """A headline number for a bento cell (style.stat's markup): value, label, then the comparison / interval.
+    Captions here are fixed text of ours, so they go in unescaped (style.stat would turn ' into &#x27;)."""
+    return (f'<div class="tx-stat"><span class="v" style="color:{style.TEXT}">{value}</span>'
+            f'<span class="c">{caption}</span><span class="s">{detail}</span></div>')
 
 
-def failure_card(title: str, body: str) -> str:
-    return (f'<div class="bm-card" style="border-left:3px solid {style.ACCENT}">{style.label(title)}'
-            f'<div style="margin-top:0.5rem;line-height:1.5">{body}</div></div>')
+def stat_row(cards: list[str], key: str):
+    """Big numbers side by side as one live hairline bento row."""
+    if not cards:
+        return
+    with st.container(key=f"cells-{key}"):
+        for col, html in zip(st.columns(len(cards)), cards):
+            col.markdown(html, unsafe_allow_html=True)
 
 
 def ci_text(run: dict, key: str, pct: bool) -> str:
@@ -46,8 +49,7 @@ def headline(metrics: dict | None):
     if model and model.get("recall_reach") is not None:
         cards.append(big_card(f"{model['recall_reach']:.1%}", "Real Criticals that reach an analyst",
                               "Called Critical, put on Watch, or sent for review: nothing here is a silent miss."))
-    for col, html in zip(st.columns(len(cards)) if cards else [], cards):
-        col.markdown(html, unsafe_allow_html=True)
+    stat_row(cards, "eval-oof")
     if not comparable:
         st.warning(f"Not comparable yet: the baseline is scored on {base.get('n_events', 0):,} events and the model "
                    f"on {model.get('n_events', 0):,}. No 'better or worse' verdict until both use the same events.")
@@ -184,13 +186,12 @@ def lede(metrics: dict | None) -> str:
     depth = (metrics or {}).get("queue_depth")
     gain = (f"<b>{depth['reduction']:.0%} fewer reviews</b> than today's ranking for the same 95% recall, "
             if depth else "Measured against the latest-CDM baseline, out of fold; ")
-    return f'<p class="bm-lede">{gain}and two ideas that failed when measured, with the reason each failed.</p>'
+    return f"{gain}and two ideas that failed when measured, with the reason each failed."
 
 
 def render(ctx):
-    st.markdown(style.section("05", "Evaluation"), unsafe_allow_html=True)
     metrics = load_metrics()
-    st.markdown(lede(metrics), unsafe_allow_html=True)
+    st.markdown(style.heading("05", "Evaluation", lede(metrics)), unsafe_allow_html=True)
     if test := holdout(metrics):   # the organisers' own check: the headline, so the eye meets it first
         held_out(test, load_error_analysis(HOLDOUT_ANALYSIS), "Official holdout · the headline",
                  f"The organisers' check: 20% of train events held out by event_id (<b>{test['n']:,} events</b>, "
@@ -210,8 +211,8 @@ def render(ctx):
     dilution = dilution_failure(ctx.shown)
     failures = [("Pc-dilution flag", dilution), ("Risk regressor", regressor_failure(metrics))]
     failures = [(t, b) for t, b in failures if b]
-    for col, (title, body) in zip(st.columns(len(failures)) if failures else [], failures):
-        col.markdown(failure_card(title, body), unsafe_allow_html=True)
+    if failures:   # numbered hairline rows, every body shown: these are the findings, not a menu
+        st.markdown(style.steps(failures, active=None), unsafe_allow_html=True)
     misses(load_error_analysis())
     tradeoff(ctx.events)
     lockbox((metrics or {}).get("test_lockbox"), load_error_analysis(LOCKBOX_ANALYSIS))
@@ -318,9 +319,10 @@ def held_out(test: dict, ea: dict | None, title: str, lede: str):
     st.markdown(f'<p class="bm-lede">{lede}</p>', unsafe_allow_html=True)
     cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}", "")
              for k, name in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision"))]
-    for col, html in zip(st.columns(len(cards)), cards):
-        col.markdown(html, unsafe_allow_html=True)
-    left, right = st.columns(2)
+    key = "".join(ch for ch in title.lower() if ch.isalnum())[:24]
+    stat_row(cards, f"eval-{key}")
+    with st.container(key=f"cells-eval-{key}-cm"):
+        left, right = st.columns(2)
     for col, (who, run) in zip((left, right), (("Baseline: latest CDM", base), ("Model", model))):
         if "confusion" in run:
             col.markdown(style.label(who), unsafe_allow_html=True)

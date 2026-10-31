@@ -34,27 +34,27 @@ def cascade_card(e: pd.Series) -> str:
 
 def render(ctx):
     shown = ctx.shown
-    st.markdown(style.section("06", "Debris cascade"), unsafe_allow_html=True)
     if not has_cascade(shown) or shown.frag_10cm.isna().all():
-        st.info("No cascade columns in the pipeline output yet. Re-run `python -m src.score`.")
+        st.markdown(style.heading("06", "Debris cascade"), unsafe_allow_html=True)
+        st.caption("No cascade columns in the pipeline output yet. Re-run `python -m src.score`.")
         return
     ev = shown[shown.frag_10cm.notna()]
     worst = ev.loc[ev.chain_p1y_max.idxmax()]
-    st.markdown(
-        f'<p class="bm-lede">If these conjunctions became collisions, <b>{ev.catastrophic.mean():.0%}</b> would be '
-        f"catastrophic, with a median of <b>{ev.frag_10cm.median():,.0f}</b> fragments each. The worst would give "
-        f"another mission a <b>{pct(worst.chain_p1y_max)}</b> yearly chance of being hit (event {int(worst.event_id)}).</p>",
+    st.markdown(style.heading(
+        "06", "Debris cascade",
+        f"If these conjunctions became collisions, <b>{ev.catastrophic.mean():.0%}</b> would be catastrophic, with a "
+        f"median of <b>{ev.frag_10cm.median():,.0f}</b> fragments each. The worst would give another mission a "
+        f"<b>{pct(worst.chain_p1y_max)}</b> yearly chance of being hit (event {int(worst.event_id)})."),
         unsafe_allow_html=True)
 
     stats = [(f"{ev.catastrophic.mean():.0%}", "Catastrophic if hit"), (f"{ev.frag_10cm.median():,.0f}", "Median fragments"),
              (pct(ev.chain_p1y_max.max()), "Worst chain risk per year"),
              (f"{ev.debris_expected.sum():,.1f}", "Expected fragments, all events")]
-    for col, (value, caption) in zip(st.columns(len(stats)), stats):
-        col.markdown(style.hero_stat(value, caption, size="row"), unsafe_allow_html=True)
+    with st.container(key="cells-cascade-stats"):
+        for col, (value, caption) in zip(st.columns(len(stats)), stats):
+            col.markdown(style.stat(value, caption), unsafe_allow_html=True)
 
     floor = ev.risk_forecast <= RISK_FLOOR   # Pc effectively zero: no expected debris, and a wall on the chart
-    st.markdown(f'<div style="margin-top:2.2rem">{style.label("Probability vs consequence · each point is one event")}'
-                "</div>", unsafe_allow_html=True)
     fig = px.scatter(ev[~floor], x="risk_forecast", y="frag_10cm", color="tier_final", color_discrete_map=TIER_COLORS,
                      category_orders={"tier_final": TIERS}, log_y=True, hover_name="event_id",
                      hover_data={"risk_forecast": False, "tier_final": True, "frag_10cm": ":,.0f",
@@ -66,9 +66,12 @@ def render(ctx):
     style.pc_axis(fig, "x", lo=lo - lo % 5, step=5).update_layout(height=420, yaxis_title="fragments ≥ 10 cm (log)",
                                                                   legend_title_text="")
     fig.update_yaxes(dtick=1, tickformat=",")   # powers of ten only, no minor 2 / 5 labels
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    st.caption(f"{int(floor.sum()):,} events with Pc < 10⁻³⁰ are left out: their expected debris is effectively zero. "
-               "Top right is the danger: likely and destructive.")
+    with st.container(key="cells-cascade-chart"):
+        (chart,) = st.columns(1)
+        chart.markdown(style.label("Probability vs consequence · each point is one event"), unsafe_allow_html=True)
+        chart.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        chart.caption(f"{int(floor.sum()):,} events with Pc < 10⁻³⁰ are left out: their expected debris is effectively "
+                      "zero. Top right is the danger: likely and destructive.")
 
     st.markdown(style.label("Ranked by consequence · expected fragments = Pc at TCA × fragments if hit"),
                 unsafe_allow_html=True)

@@ -7,13 +7,6 @@ GREYS = [[0, "#F2F2F2"], [1, "#4A4A4A"]]  # time along a path: not a tier, so no
 NO_TOOLBAR = {"displayModeBar": False}  # it sat on top of the chart titles; zoom still works by drag
 
 
-def stat(value: str, caption: str, tier: str | None = None) -> str:
-    """A header-strip number: the shared row size, a notch smaller so six fit across."""
-    # display tracking (-0.07em) swallows the spaces in '2 d 06 h' and '202 m', so loosen it here
-    return style.hero_stat(value, caption, tier, size="row").replace(
-        'style="color:', 'style="font-size:clamp(1.6rem,2.4vw,2.6rem);letter-spacing:-0.02em;color:', 1)
-
-
 def tier_probability_bar(e) -> str:
     """The forecaster's final-tier probabilities (p_safe + p_elevated + p_critical = 1) as one stacked bar, each
     segment labelled in words. Empty when the columns are missing or not filled (older output, refusals)."""
@@ -23,8 +16,8 @@ def tier_probability_bar(e) -> str:
     probs = [(t, float(e[k])) for k, t in keys]
     segs = "".join(f'<div style="width:{p * 100:.2f}%;background:{TIER_COLORS[t]}"></div>' for t, p in probs if p > 0)
     legend = " · ".join(f'<span style="color:{TIER_COLORS[t]}">{t.title()}</span> {format_prob(p)}' for t, p in probs)
-    return (f'<div style="margin:0.4rem 0 0.9rem">{style.label("Final tier at TCA · forecast probability")}'
-            f'<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;margin:0.45rem 0 0.35rem;'
+    return (f'<div style="margin:0.9rem 0">{style.label("Final tier at TCA · forecast probability")}'
+            f'<div style="display:flex;height:6px;overflow:hidden;margin:0.5rem 0 0.4rem;'
             f'background:{style.LINE}">{segs}</div><div style="font-size:0.9rem">{legend}</div></div>')
 
 
@@ -59,14 +52,15 @@ DECISION_LOG_COLUMNS = [
 
 
 def note_card(title: str, body: str, tier: str | None = None) -> str:
-    edge = f"border-left:3px solid {TIER_COLORS[tier]};" if tier else ""
-    return (f'<div class="bm-card" style="{edge}margin-bottom:0.8rem">{style.label(title)}'
-            f'<div style="margin-top:0.45rem;line-height:1.45">{body}</div></div>')
+    """A hairline cell for the side column; a tier-coloured left rule only when it is about a tier."""
+    edge = f"border-left:2px solid {TIER_COLORS[tier]};" if tier else ""
+    return f'<div class="bm-card" style="{edge}margin-bottom:0.8rem">{style.cell(title, body)}</div>'
 
 
 def render(ctx):
     shown, history, split, decisions = ctx.shown, ctx.history, ctx.split, ctx.decisions
-    st.markdown(style.section("02", "Event detail"), unsafe_allow_html=True)
+    st.markdown(style.heading("02", "Event detail", "One event in full: why it has its tier, how it got there, "
+                              "what to do, and your signed decision."), unsafe_allow_html=True)
     ranked = queue_order(shown)
     if ranked.empty:
         st.info("No events match the filters.")
@@ -83,8 +77,9 @@ def render(ctx):
              (format_prob(e.p_critical) if forecast else "withheld", "P(Critical at TCA)", None),
              (format_miss(e.miss_latest_m), "Miss now", None),
              (format_pc(e.risk_hi) if forecast else "withheld", "95% bound at TCA", None)]
-    for col, (value, caption, tier) in zip(st.columns([1.5, 1, 1, 1, 1, 1.2]), strip):  # the tier word is widest
-        col.markdown(stat(value, caption, tier), unsafe_allow_html=True)
+    with st.container(key="cells-detail-strip"):   # live bento: each column is a hairline cell
+        for col, (value, caption, tier) in zip(st.columns([1.3, 1, 1, 1, 1, 1.1]), strip):  # tier word is widest
+            col.markdown(style.stat(value, caption, tier), unsafe_allow_html=True)
     if forecast and (bar := tier_probability_bar(e)):
         st.markdown(bar, unsafe_allow_html=True)
     st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{str(e.c_object_type).capitalize()} · '
@@ -101,9 +96,9 @@ def render(ctx):
                                   "shown; review this event from its CDM history.", CRITICAL), unsafe_allow_html=True)
         elif bool(e.get("watch", False)):   # between the 95%-recall threshold and the 15% Critical threshold
             st.markdown(note_card(
-                "Watch", f"P(Critical at TCA) is {format_prob(e.p_critical)}: above the recall threshold, so an "
+                "Watch", f"{style.status_pill('watch')} P(Critical at TCA) is {format_prob(e.p_critical)}: above the recall threshold, so an "
                 "analyst should look, but under the 15% needed to call it Critical. No maneuver is planned.",
-                ELEVATED), unsafe_allow_html=True)
+                ), unsafe_allow_html=True)   # Watch is a status, not a tier: no tier colour
         elif pd.notna(e.maneuver_dr_m):  # the pipeline plans one for CRITICAL events only
             if e.maneuver_dr_m == 0:
                 st.markdown(note_card("Suggested maneuver", "None from geometry: the separation already clears the "
@@ -187,14 +182,13 @@ def render(ctx):
         shown_pc = [*path.risk, e.risk_forecast, e.risk_hi, e.risk_final, e.risk_potential]
         lo = int(np.floor(np.nanmin(shown_pc))) if len(path) else int(RISK_FLOOR)
         style.pc_axis(risk, lo=lo, step=max(1, int(np.ceil(-lo / 8))))  # ~8 ticks, whatever the range
-        a, b = st.columns(2)
-        a.markdown(style.label("Pc per CDM update"), unsafe_allow_html=True)
-        a.plotly_chart(risk, width="stretch", config=NO_TOOLBAR)
-        b.markdown(style.label("Miss distance per CDM update"), unsafe_allow_html=True)
-        b.plotly_chart(miss, width="stretch", config=NO_TOOLBAR)
+        with st.container(key="cells-detail-charts"):
+            a, b = st.columns(2)
+            a.markdown(style.label("Pc per CDM update"), unsafe_allow_html=True)
+            a.plotly_chart(risk, width="stretch", config=NO_TOOLBAR)
+            b.markdown(style.label("Miss distance per CDM update"), unsafe_allow_html=True)
+            b.plotly_chart(miss, width="stretch", config=NO_TOOLBAR)
 
-        st.markdown(style.label("Encounter geometry · predicted miss vector per CDM, 1 km and 5 km spheres"),
-                    unsafe_allow_html=True)
         geo = go.Figure([
             sphere(MISS_CRITICAL_M, CRITICAL, "1 km"), sphere(MISS_ELEVATED_M, ELEVATED, "5 km"),
             go.Scatter3d(x=path.relative_position_t, y=path.relative_position_n, z=path.relative_position_r,
@@ -209,4 +203,8 @@ def render(ctx):
                                      zaxis=dict(title="r (m)", **axis), aspectmode="data"),
                           height=440, margin=dict(l=0, r=0, t=30, b=40),
                           legend=dict(orientation="h", x=0, y=1, yanchor="bottom"))   # top-left, clear of the ticks
-        st.plotly_chart(geo, width="stretch")
+        with st.container(key="cells-detail-geometry"):
+            (geo_col,) = st.columns(1)
+            geo_col.markdown(style.label("Encounter geometry · predicted miss vector per CDM, 1 km and 5 km spheres"),
+                             unsafe_allow_html=True)
+            geo_col.plotly_chart(geo, width="stretch", config=NO_TOOLBAR)
