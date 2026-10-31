@@ -74,30 +74,34 @@ def test_hidden_test_set_block(tmp_path, monkeypatch):
 
 
 def test_official_holdout_block_leads_with_the_organisers_split(tmp_path, monkeypatch):
-    conf = lambda m: {"labels": ["SAFE", "ELEVATED", "CRITICAL"], "matrix": m}  # noqa: E731
-    hm, ea = tmp_path / "holdout_metrics.json", tmp_path / "ea_holdout.json"
-    hm.write_text(json.dumps({"baseline": {**METRIC_RUN, "recall_critical": 0.877, "n_critical": 154},
-                              "model": {**METRIC_RUN, "recall_critical": 0.981, "precision_critical": 0.487,
-                                        "n_critical": 154, "ci95": {"recall_critical": [0.957, 1.0]}}}))
+    conf = lambda m, **kw: {"labels": ["SAFE", "ELEVATED", "CRITICAL"], "matrix": m, **kw}  # noqa: E731
+    ea = tmp_path / "ea_holdout.json"
     ea.write_text(json.dumps({"missed_examples": [
         {"event_id": 1936, "cause": "miss_driven", "risk_decision": -9.0, "risk_final": -6.5,
          "miss_decision_m": 13748.0, "miss_final_m": 657.0, "tier_issued": "SAFE"}]}))
-    monkeypatch.setattr(evaluation, "HOLDOUT_METRICS", hm)
     monkeypatch.setattr(evaluation, "HOLDOUT_ANALYSIS", ea)
     metrics = {"baseline": METRIC_RUN, "holdout": {"n": 2389, "note": "20% by event_id",
-               "baseline": conf([[1700, 60, 25], [40, 380, 30], [5, 14, 135]]),
-               "model": conf([[1714, 48, 23], [29, 285, 136], [2, 1, 151]])}}
+               "baseline": conf([[1721, 57, 7], [31, 394, 25], [3, 16, 135]], recall_reach=0.890),
+               "model": conf([[1721, 54, 10], [31, 364, 55], [3, 10, 141]], recall_reach=0.981)}}
     text = page_text(render(write_pipeline(tmp_path / "data", metrics=metrics), monkeypatch))
     assert "Official holdout" in text and "<b>2,389 events</b>, <b>154</b> truly Critical" in text
-    assert ">98.1%<" in text and "baseline 87.7% · 95% CI 95.7%–100.0%" in text
+    # cards come from the same matrices shown under them: 141/154 caught, 141/206 called
+    assert ">91.6%<" in text and "baseline 87.7%" in text and ">68.4%<" in text and "baseline 80.8%" in text
+    assert "95% CI 86.1%" in text                              # Wilson interval for 141/154
+    assert ">98.1%<" in text and "Reach an analyst" in text and "baseline 89.0%" in text
     assert "13.7 km → 657 m" in text   # format_miss switches to km at 10 km
-    assert text.index("Official holdout") < text.index("Alert fatigue")   # the headline comes first
+    assert text.index("Official holdout") < text.index("Out of fold")   # the headline comes first
 
 
-def test_no_holdout_metrics_file_no_holdout_block(tmp_path, monkeypatch):
-    monkeypatch.setattr(evaluation, "HOLDOUT_METRICS", tmp_path / "absent.json")
+def test_holdout_block_needs_both_matrices(tmp_path, monkeypatch):
     metrics = {"baseline": METRIC_RUN, "holdout": {"n": 1, "baseline": {}, "model": {}}}
     assert "Official holdout" not in page_text(render(write_pipeline(tmp_path / "d", metrics=metrics), monkeypatch))
+
+
+def test_wilson_interval_edges():
+    lo, hi = evaluation._wilson(154, 154)
+    assert hi == 1.0 and 0.97 < lo < 0.98                       # all caught: not a zero-width interval
+    assert evaluation._wilson(0, 0) is None and evaluation._wilson(0, 10)[0] == 0.0
 
 
 def test_final_tier_probability_bar(tmp_path, monkeypatch):

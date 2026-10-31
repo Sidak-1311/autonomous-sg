@@ -203,9 +203,10 @@ def render(ctx):
 
     if not (ctx.shown.tier_actual.notna()).any():
         st.caption("Alert fatigue and the Pc-dilution check need known outcomes: choose the train split.")
-    st.markdown(style.label("Alert fatigue · actual Criticals caught, working the queue top-down"),
-                unsafe_allow_html=True)
-    fatigue(ctx.shown)
+    else:   # no label without its chart
+        st.markdown(style.label("Alert fatigue · actual Criticals caught, working the queue top-down"),
+                    unsafe_allow_html=True)
+        fatigue(ctx.shown)
 
     st.markdown(style.label("Where it fails"), unsafe_allow_html=True)
     dilution = dilution_failure(ctx.shown)
@@ -291,15 +292,40 @@ HOLDOUT_METRICS = ROOT / "models" / "holdout_metrics.json"       # 80/20 split b
 HOLDOUT_ANALYSIS = ROOT / "models" / "error_analysis_holdout.json"
 
 
-def holdout(metrics: dict | None) -> dict | None:
-    """The organisers' 80/20 held-out evaluation: scores + CIs from holdout_metrics.json, matrices from
-    metrics.json['holdout']. None unless both are there."""
-    cm = (metrics or {}).get("holdout")
-    if not cm or not HOLDOUT_METRICS.exists():
+def _wilson(k: int, n: int, z: float = 1.96) -> list[float] | None:
+    """95% Wilson score interval for a proportion k/n (sound near 0% and 100%, unlike k/n ± 2 SE)."""
+    if n <= 0:
         return None
-    hm = json.loads(HOLDOUT_METRICS.read_text())
-    return {"n": cm["n"], "baseline": {**hm["baseline"], "confusion": cm["baseline"]},
-            "model": {**hm["model"], "confusion": cm["model"]}}
+    p, d = k / n, 1 + z * z / n
+    mid, half = (p + z * z / (2 * n)) / d, z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return [max(0.0, mid - half), min(1.0, mid + half)]
+
+
+def _scores(conf: dict) -> dict | None:
+    """Critical recall / precision (+ Wilson 95% CIs) and reach from one confusion matrix, as issued."""
+    labels, m = conf.get("labels"), conf.get("matrix")
+    if not labels or not m or CRITICAL not in labels:
+        return None
+    c = labels.index(CRITICAL)
+    hit, actual, called = m[c][c], sum(m[c]), sum(row[c] for row in m)
+    out = {"recall_critical": hit / actual if actual else float("nan"),
+           "precision_critical": hit / called if called else float("nan"), "n_critical": actual,
+           "ci95": {"recall_critical": _wilson(hit, actual), "precision_critical": _wilson(hit, called)},
+           "confusion": conf}
+    if conf.get("recall_reach") is not None:
+        out["recall_reach"] = conf["recall_reach"]
+    return out
+
+
+def holdout(metrics: dict | None) -> dict | None:
+    """The organisers' 80/20 held-out evaluation, AS DEPLOYED: everything comes from metrics.json['holdout']
+    (score.py re-issues the held-out tiers with today's rules: 15% Critical threshold, Watch, refusals),
+    so the cards and the matrices under them can't disagree. None without that block."""
+    cm = (metrics or {}).get("holdout")
+    base, model = _scores((cm or {}).get("baseline") or {}), _scores((cm or {}).get("model") or {})
+    if not base or not model:
+        return None
+    return {"n": cm["n"], "baseline": base, "model": model}
 
 
 def lockbox(test: dict | None, ea: dict | None):
@@ -319,6 +345,10 @@ def held_out(test: dict, ea: dict | None, title: str, lede: str):
     st.markdown(f'<p class="bm-lede">{lede}</p>', unsafe_allow_html=True)
     cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}", "")
              for k, name in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision"))]
+    if model.get("recall_reach") is not None:
+        base_reach = f"baseline {base['recall_reach']:.1%} · " if base.get("recall_reach") is not None else ""
+        cards.append(big_card(f"{model['recall_reach']:.1%}", "Reach an analyst · model",
+                              f"{base_reach}issued Critical, put on Watch or sent for review", ""))
     key = "".join(ch for ch in title.lower() if ch.isalnum())[:24]
     stat_row(cards, f"eval-{key}")
     with st.container(key=f"cells-eval-{key}-cm"):
