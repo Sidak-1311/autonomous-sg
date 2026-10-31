@@ -7,8 +7,13 @@ CASCADE_COLS = ["frag_10cm", "catastrophic", "energy_j_per_g", "shell_alt_km", "
 
 
 def pct(p: float) -> str:
-    """Small probabilities as percentages that keep two significant figures (0.021%, not 0.0%)."""
-    return "n/a" if pd.isna(p) else f"{p * 100:.2g}%"
+    """Probabilities as percentages with two significant figures, trailing zeros kept so a column
+    reads evenly: 1.0%, 0.42%, 0.053%, 0.00020%; exactly 0 is '0%'."""
+    if pd.isna(p):
+        return "n/a"
+    if p == 0:
+        return "0%"
+    return f"{p * 100:#.2g}".rstrip(".") + "%"
 
 
 def has_cascade(df) -> bool:

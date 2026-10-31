@@ -51,6 +51,11 @@ DECISION_LOG_COLUMNS = [
 ]
 
 
+def nowrap(text: str) -> str:
+    """Keep a value and its unit on one line."""
+    return f'<span style="white-space:nowrap">{text}</span>'
+
+
 def note_card(title: str, body: str, tier: str | None = None) -> str:
     """A hairline cell for the side column; a tier-coloured left rule only when it is about a tier."""
     edge = f"border-left:2px solid {TIER_COLORS[tier]};" if tier else ""
@@ -108,10 +113,10 @@ def render(ctx):
                 half_orbit = np.pi / LEO_MEAN_MOTION / 60
                 st.markdown(note_card(
                     "Suggested maneuver",
-                    f'<span style="font:800 2rem {style.FONT};letter-spacing:-0.05em">'
+                    f'<span style="font:800 2rem {style.FONT};letter-spacing:-0.05em;color:{style.TEXT}">'
                     f"{abs(e.maneuver_dr_m):,.0f} m ({'outward' if e.maneuver_dr_m > 0 else 'inward'})</span><br>"
-                    f"radial shift: an along-track burn of {e.maneuver_dv_mps * 100:.1f} cm/s about "
-                    f"{half_orbit:.0f} min (half an orbit) before TCA. A first-order suggestion to verify.",
+                    f"radial shift: an along-track burn of {nowrap(f'{e.maneuver_dv_mps * 100:.1f} cm/s')} about "
+                    f"{nowrap(f'{half_orbit:.0f} min')} (half an orbit) before TCA. A first-order suggestion to verify.",
                     CRITICAL), unsafe_allow_html=True)
         if card := cascade_card(e):
             st.markdown(card, unsafe_allow_html=True)
@@ -171,10 +176,11 @@ def render(ctx):
             if pd.notna(final):
                 fig.add_trace(go.Scatter(x=[0], y=[final], mode="markers", marker_symbol="x",
                                          marker=dict(size=10, color=style.TEXT), name="actual at TCA"))
+            # Label sits on the far-from-TCA side of the line, inside the plot, so it never runs off the edge
             fig.add_vline(x=DECISION_DAYS, line_dash="dot", line_color=style.MUTED, annotation_text="decision point",
-                          annotation_font_color=style.MUTED)
+                          annotation_position="top left", annotation_font=dict(color=style.MUTED, size=10))
             fig.update_xaxes(autorange="reversed", title="days to TCA")
-            fig.update_layout(height=340, legend=dict(y=-0.28, yanchor="top"), margin=dict(t=10))
+            fig.update_layout(height=340, legend=dict(y=-0.22, yanchor="top"), margin=dict(t=10, r=10))
         if e.pc_diluted:
             risk.add_trace(go.Scatter(x=[e.time_to_tca] * 2, y=[e.risk_latest, e.risk_potential], mode="lines+markers",
                                       line=dict(dash="dot", color=style.MUTED),
@@ -194,14 +200,17 @@ def render(ctx):
             go.Scatter3d(x=path.relative_position_t, y=path.relative_position_n, z=path.relative_position_r,
                          mode="lines+markers", name="predicted miss vector", line=dict(color=style.MUTED),
                          marker=dict(size=4, color=path.time_to_tca, colorscale=GREYS,
-                                     colorbar=dict(title="days to TCA", thickness=6, outlinewidth=0, len=0.5))),
+                                     colorbar=dict(title=dict(text="days to TCA", side="right"), thickness=6,
+                                                   outlinewidth=0, len=0.45, x=0.86, xpad=0))),
             go.Scatter3d(x=[0], y=[0], z=[0], mode="markers", marker=dict(size=5, color=style.TEXT), name="satellite"),
         ])
         geo.data[0].opacity, geo.data[1].opacity = 0.18, 0.05  # the 5 km shell is context, not the subject
         axis = dict(backgroundcolor="rgba(0,0,0,0)", gridcolor=style.LINE, color=style.MUTED, tickformat=",")
         geo.update_layout(scene=dict(xaxis=dict(title="t (m)", **axis), yaxis=dict(title="n (m)", **axis),
-                                     zaxis=dict(title="r (m)", **axis), aspectmode="data"),
-                          height=440, margin=dict(l=0, r=0, t=30, b=40),
+                                     zaxis=dict(title="r (m)", **axis), aspectmode="data",
+                                     domain=dict(x=[0, 0.84]),   # room for the colour bar right beside the scene
+                                     camera=dict(eye=dict(x=1.7, y=1.7, z=1.0))),   # zoomed out: ticks stay in frame
+                          height=480, margin=dict(l=0, r=0, t=30, b=10),
                           legend=dict(orientation="h", x=0, y=1, yanchor="bottom"))   # top-left, clear of the ticks
         with st.container(key="cells-detail-geometry"):
             (geo_col,) = st.columns(1)

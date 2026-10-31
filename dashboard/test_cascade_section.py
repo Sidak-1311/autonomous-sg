@@ -23,14 +23,15 @@ def with_cascade(tmp_path):
 
 
 def test_pct_keeps_small_probabilities_readable():
-    assert pct(0.0103) == "1%" and pct(0.00042) == "0.042%" and pct(2e-6) == "0.0002%" and pct(float("nan")) == "n/a"
+    assert pct(0.0103) == "1.0%" and pct(0.00042) == "0.042%" and pct(2e-6) == "0.00020%" and pct(float("nan")) == "n/a"
+    assert pct(0) == "0%" and pct(0.15) == "15%" and pct(0.0042) == "0.42%"   # one precision down a column
 
 
 def test_detail_card_for_a_catastrophic_event_with_neighbours(tmp_path, monkeypatch):
     text = page_text(render(with_cascade(tmp_path), monkeypatch))   # event 0 is selected first
     assert "If this collision happened" in text and ">1,400</span>" in text and "fragments ≥ 10 cm" in text
     assert "catastrophic: both bodies break up (5,000 J/g)" in text
-    assert "2 other missions share its ±50 km shell at 700 km" in text and "<b>1%</b> chance per year" in text
+    assert "2 other missions share its ±50 km shell at 700 km" in text and "<b>1.0%</b> chance per year" in text
 
 
 def test_detail_card_alone_in_its_shell_and_a_partial_breakup(tmp_path, monkeypatch):
