@@ -83,3 +83,19 @@ def test_reason_uses_scientific_notation_and_metres():
     reason = ev.loc[1, "reason"]
     assert "Critical now (miss 999 m < 1,000 m)" in reason
     assert "1e-" not in reason and "orders of magnitude per day" in reason
+
+
+def test_holdout_metrics_blocks(tmp_path):
+    path = tmp_path / "holdout_predictions.parquet"
+    assert score_mod.holdout_metrics(path) == {}                      # no file yet: nothing reported
+    pd.DataFrame({
+        "event_id": [1, 2, 3, 4], "tier_actual": ["CRITICAL", "CRITICAL", "SAFE", None],
+        "tier_now": ["ELEVATED", "CRITICAL", "SAFE", "SAFE"], "tier_final": ["CRITICAL", "CRITICAL", "SAFE", "SAFE"],
+        "final_ttca": [0.5, 3.0, 0.2, 0.1],
+    }).to_parquet(path)
+    m = score_mod.holdout_metrics(path)
+    assert m["holdout"]["n"] == 3                                     # unlabelled row dropped
+    assert m["holdout"]["model"]["recall"]["CRITICAL"] == 1.0
+    assert m["holdout"]["baseline"]["recall"]["CRITICAL"] == 0.5
+    hard = m["holdout_forecast_only"]
+    assert hard["n"] == 2 and hard["baseline"]["recall"]["CRITICAL"] == 0.0   # event 2 (final 3 d out) excluded

@@ -109,6 +109,16 @@ if "queue_depth" in metrics:
           f"queue depth model {qd['model']} vs baseline {qd['baseline']}, CI contains the estimate")
 check("baseline" in metrics or not (ROOT / "src" / "metrics.py").exists(),
       "baseline metrics written once src/metrics.py exists")
+if (ROOT / "models" / "holdout_predictions.parquet").exists():
+    for key in ("holdout", "holdout_forecast_only"):
+        block = metrics.get(key, {})
+        ok = block.get("n", 0) > 0 and all(
+            sum(map(sum, block[s]["matrix"])) == block["n"] for s in ("baseline", "model"))
+        check(ok, f"{key}: confusion matrices cover all {block.get('n', 0):,} held-out events")
+
+# The organisers' per-event labels, when present: our targets must equal them event by event
+if (ROOT / "scripts" / "check_labels.py").exists():
+    run([sys.executable, "scripts/check_labels.py"])
 
 print(f"\n{len(failures)} failure(s)" if failures else "\nall checks passed")
 sys.exit(1 if failures else 0)

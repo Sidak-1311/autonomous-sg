@@ -8,7 +8,7 @@ Confidence intervals come from a bootstrap over events.
 """
 import numpy as np
 
-from src.tiering import CRITICAL, RISK_ELEVATED, RISK_FLOOR, tier_array
+from src.tiering import CRITICAL, RISK_ELEVATED, RISK_FLOOR, TIERS, tier_array
 
 HIGH_RISK = RISK_ELEVATED
 METRICS = ["recall_critical", "precision_critical", "f2", "mse_hr", "loss"]
@@ -108,3 +108,19 @@ def queue_depth(is_critical, rank_model, rank_baseline, recall=0.95, n_boot=1000
     out["ci95"] = {k: [float(x) for x in np.percentile(np.concatenate(v), [2.5, 97.5])]
                    for k, v in boots.items() if v}
     return out
+
+
+def confusion(tier_true, tier_pred) -> dict:
+    """3x3 tier confusion matrix (rows = actual, columns = predicted, SAFE/ELEVATED/CRITICAL)
+    with per-class recall, precision and counts. A class with no events gets None, not 0."""
+    labels = list(TIERS)
+    t, p = np.asarray(tier_true, dtype=object), np.asarray(tier_pred, dtype=object)
+    m = np.array([[int(np.sum((t == a) & (p == b))) for b in labels] for a in labels])
+    rows, cols = m.sum(axis=1), m.sum(axis=0)
+    return {
+        "labels": labels,
+        "matrix": m.tolist(),
+        "recall": {c: (float(m[i, i] / rows[i]) if rows[i] else None) for i, c in enumerate(labels)},
+        "precision": {c: (float(m[i, i] / cols[i]) if cols[i] else None) for i, c in enumerate(labels)},
+        "n": {c: int(rows[i]) for i, c in enumerate(labels)},
+    }

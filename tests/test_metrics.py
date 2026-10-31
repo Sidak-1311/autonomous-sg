@@ -89,3 +89,29 @@ def test_queue_depth_single_event():
     from src.metrics import queue_depth
     m = queue_depth([True], [0], [0], n_boot=20)
     assert m["model"] == 1 and m["baseline"] == 1 and m["reduction"] == 0.0
+
+
+# --- confusion matrix ----------------------------------------------------------
+
+from src.metrics import confusion  # noqa: E402
+
+
+def test_confusion_counts_rows_actual_cols_predicted():
+    c = confusion(["CRITICAL", "CRITICAL", "SAFE", "ELEVATED"], ["CRITICAL", "ELEVATED", "SAFE", "CRITICAL"])
+    assert c["labels"] == ["SAFE", "ELEVATED", "CRITICAL"]
+    assert c["matrix"] == [[1, 0, 0], [0, 0, 1], [0, 1, 1]]
+    assert c["recall"]["CRITICAL"] == 0.5 and c["precision"]["CRITICAL"] == 0.5
+    assert c["n"] == {"SAFE": 1, "ELEVATED": 1, "CRITICAL": 2}
+
+
+def test_confusion_empty_and_missing_classes():
+    empty = confusion([], [])
+    assert empty["matrix"] == [[0] * 3] * 3 and all(v is None for v in empty["recall"].values())
+    c = confusion(["SAFE", "SAFE"], ["SAFE", "CRITICAL"])           # no actual Criticals
+    assert c["recall"]["CRITICAL"] is None and c["precision"]["CRITICAL"] == 0.0
+    assert c["recall"]["SAFE"] == 0.5 and c["precision"]["ELEVATED"] is None
+
+
+def test_confusion_all_one_class():
+    c = confusion(["ELEVATED"] * 3, ["ELEVATED"] * 3)
+    assert c["matrix"][1][1] == 3 and c["recall"]["ELEVATED"] == 1.0 and c["precision"]["ELEVATED"] == 1.0

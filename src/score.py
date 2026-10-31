@@ -27,6 +27,7 @@ MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_PATH = MODELS_DIR / "forecaster.joblib"
 CONFORMAL_PATH = MODELS_DIR / "conformal.json"
 OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
+HOLDOUT_PATH = MODELS_DIR / "holdout_predictions.parquet"
 
 CDM_COLS = ["split"] + COLUMNS + ["tier"]
 EVENT_COLS = [
@@ -228,7 +229,34 @@ def evaluate_baseline_and_model(ev: pd.DataFrame) -> dict:
         results["model"] = json.loads(cv_path.read_text())
     if not known["forecast_in_sample"].any():
         results["queue_depth"] = _queue_depth(known)
+    results.update(holdout_metrics())
     return results
+
+
+def holdout_metrics(path: Path = HOLDOUT_PATH) -> dict:
+    """Confusion matrices on the fixed 80/20 event_id holdout (train.py writes the predictions).
+
+    'holdout' covers every held-out event. 'holdout_forecast_only' keeps events whose final CDM
+    is less than 2 days out: for the rest the final tier is already known at the decision point
+    (tier_actual == tier_now trivially), which inflates every score.
+    """
+    if not path.exists():
+        return {}
+    from src.metrics import confusion
+    hold = pd.read_parquet(path)
+    hold = hold[hold["tier_actual"].notna()]
+
+    def block(df, note):
+        return {"n": int(len(df)), "note": note,
+                "baseline": confusion(df["tier_actual"], df["tier_now"]),
+                "model": confusion(df["tier_actual"], df["tier_final"])}
+
+    out = {"holdout": block(hold, "all held-out events (organisers' usable set), 20% by event_id")}
+    if "final_ttca" in hold:
+        hard = hold[hold["final_ttca"] < 2.0]
+        out["holdout_forecast_only"] = block(
+            hard, "final CDM < 2 d out: the outcome is not yet visible at the decision point")
+    return out
 
 
 def _queue_depth(known: pd.DataFrame) -> dict:
