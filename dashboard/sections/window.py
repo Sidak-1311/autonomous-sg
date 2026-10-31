@@ -5,7 +5,7 @@ import streamlit as st
 
 from dashboard import style
 from dashboard.sections.common import DECISION_DAYS
-from dashboard.sections.fleet import STAT_CSS, stat
+from dashboard.sections.fleet import stat
 from src.tiering import CRITICAL, ELEVATED, MISS_CRITICAL_M, MISS_ELEVATED_M, TIER_COLORS
 
 HOURS = np.arange(24)
@@ -57,7 +57,6 @@ def _chart(inside, near, crit, now: int, start: float) -> go.Figure:
 
 def render(ctx):
     shown = ctx.shown
-    _md(STAT_CSS)
     _md(style.section("04", "Next 24 hours"))
     lo = float(shown.time_to_tca.min()) if len(shown) else DECISION_DAYS
     controls = st.columns(2, gap="large")

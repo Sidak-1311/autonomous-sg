@@ -13,19 +13,13 @@ CHART = dict(margin=dict(l=0, r=0, t=8, b=0), showlegend=False)
 BAND_OPACITY = 0.07   # quieter than the shared tier_bands: the points carry the colour here
 MISS_RANGE_M = (50, 100_000)
 
-# --- section-scoped CSS (fleet + window stat rows): numbers sized for 4-5 across, never wrapping
-STAT_CSS = """<style>
-.stat-row .bm-hero { gap: 0.75rem; }
-.stat-row .bm-hero .num { font-size: clamp(2.4rem, 4.6vw, 4.8rem); white-space: nowrap; line-height: 0.9; }
-</style>"""
-
 
 def _md(html: str):
     st.markdown(html, unsafe_allow_html=True)
 
 
 def stat(value: str, caption: str, tier: str | None = None) -> str:
-    return f'<div class="stat-row">{style.hero_stat(value, caption, tier)}</div>'
+    return style.hero_stat(value, caption, tier, size="row")
 
 
 def _bands(fig):
@@ -124,7 +118,6 @@ def _storm(shown: pd.DataFrame):
 
 def render(ctx):
     shown = ctx.shown
-    _md(STAT_CSS)
     _md(style.section("03", "Fleet overview"))
     at_tca = st.segmented_control("Position events by", ["Forecast at TCA", "Latest CDM"],
                                   default="Forecast at TCA") != "Latest CDM"
