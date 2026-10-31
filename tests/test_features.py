@@ -36,17 +36,28 @@ def test_uses_only_cdms_before_cutoff_and_targets_last_cdm():
     assert not ev[FEATURES].isna().any().any()
 
 
-def test_test_split_and_far_final_have_no_target():
+def test_test_split_has_no_target():
     ev = _table([
         _cdm(1, 4.0, -10.0, 9_000, split="test"),
         _cdm(1, 2.5, -9.0, 8_000, split="test"),
-        _cdm(2, 4.0, -10.0, 9_000),
-        _cdm(2, 2.5, -9.0, 8_000),   # last train CDM still 2.5 days out
     ]).set_index(["split", "event_id"])
-    for key in [("test", 1), ("train", 2)]:
-        assert not ev.loc[key, "has_target"]
-        assert np.isnan(ev.loc[key, "risk_final"])
-        assert ev.loc[key, "tier_actual"] is None
+    row = ev.loc[("test", 1)]
+    assert not row["has_target"]
+    assert np.isnan(row["risk_final"]) and np.isnan(row["final_ttca"])
+    assert row["tier_actual"] is None
+
+
+def test_far_final_is_still_the_target():
+    # Organisers' labels: the final state is the last CDM, even when it is
+    # still >= 2 days out (then it equals the decision-point state)
+    ev = _table([
+        _cdm(2, 4.0, -10.0, 9_000),
+        _cdm(2, 2.5, -9.0, 4_000),
+    ]).set_index(["split", "event_id"])
+    row = ev.loc[("train", 2)]
+    assert row["has_target"] and row["final_ttca"] == 2.5
+    assert row["risk_final"] == -9.0 and row["miss_final_m"] == 4_000
+    assert row["tier_actual"] == row["tier_now"] == "ELEVATED"
 
 
 def test_pc_approx_monotone_in_miss_distance():

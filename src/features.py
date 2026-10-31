@@ -2,7 +2,9 @@
 
 Operators must commit to a maneuver at least 2 days before TCA, so inputs use
 only CDMs with time_to_tca >= CUTOFF_DAYS. Targets come from the event's last
-CDM (train only; test data stops at the cutoff).
+CDM (train only; test data stops at the cutoff), whatever its time_to_tca, as
+in the organisers' label file: every train event with a CDM at the cutoff has
+a target (scripts/check_labels.py checks this event by event).
 """
 import numpy as np
 import pandas as pd
@@ -12,9 +14,6 @@ from src.physics import combined_sigma, log10_pc_approx
 from src.tiering import RISK_FLOOR, tier_array
 
 CUTOFF_DAYS = 2.0
-# Train events whose last CDM is still >= this far out never show the final
-# state, so they can't supply a target.
-TARGET_MAX_TTCA = 1.0
 
 LATEST_COLS = [
     "time_to_tca", "risk", "max_risk_estimate", "miss_distance", "relative_speed",
@@ -104,9 +103,10 @@ def build_event_table(cdms: pd.DataFrame, cutoff: float = CUTOFF_DAYS) -> pd.Dat
     final = cdms.groupby(keys).last()[["time_to_tca", "risk", "miss_distance"]]
     final.columns = ["final_ttca", "risk_final", "miss_final_m"]
     ev = ev.join(final)
-    has_target = (ev.index.get_level_values("split") == "train") & (ev["final_ttca"] < TARGET_MAX_TTCA)
+    has_target = ev.index.get_level_values("split") == "train"
     ev["has_target"] = has_target
     ev.loc[~has_target, ["risk_final", "miss_final_m"]] = np.nan
     ev["tier_actual"] = np.where(has_target, tier_array(ev["risk_final"], ev["miss_final_m"]), None)
     ev["tier_now"] = tier_array(ev["risk_latest"], ev["miss_latest_m"])
-    return ev.drop(columns="final_ttca").reset_index()
+    ev.loc[~has_target, "final_ttca"] = np.nan
+    return ev.reset_index()
