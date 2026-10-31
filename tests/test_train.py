@@ -102,3 +102,39 @@ def test_floor_never_forecast_for_high_risk_events():
     out = train.predict(bundle, ev)
     high = ev["risk_latest"] >= -6
     assert (out.loc[high, "risk_forecast"] > RISK_FLOOR).all()
+
+
+def test_conformal_interval_coverage_and_clipping():
+    ev = _events(n=200)
+    calib = train.calibrate_interval(ev, alpha=0.2, n_folds=3)
+    assert 0.6 <= calib["coverage"] <= 1.0   # small sample, so a loose check on 80%
+    iv = train.risk_interval(ev, calib)
+    assert list(iv.index) == list(ev.index)
+    assert (iv["risk_lo"] <= iv["risk_hi"]).all()
+    assert iv["risk_lo"].between(RISK_FLOOR, 0).all() and iv["risk_hi"].between(RISK_FLOOR, 0).all()
+
+
+def test_conformal_small_groups_use_pooled_bounds():
+    ev = _events(n=40)
+    calib = train.calibrate_interval(ev, n_folds=3)
+    assert calib["groups"] == {}   # every tier_now group under INTERVAL_MIN_N
+    iv = train.risk_interval(ev, calib)
+    lo = np.clip(ev["risk_latest"] + calib["pooled"]["lo"], RISK_FLOOR, 0)
+    assert np.allclose(iv["risk_lo"], lo)
+    assert train.risk_interval(ev.iloc[:0], calib).empty
+
+
+def test_storm_stress_raises_activity_only():
+    ev = _events()
+    bundle, _ = train.train(ev, n_folds=3)
+    levels = train.storm_levels(ev)
+    assert levels["F10"] == ev["F10"].quantile(0.99)
+    out = train.storm_stress(bundle, ev, levels)
+    assert list(out.columns) == ["p_critical_storm", "storm_flips"]
+    assert out["p_critical_storm"].between(0, 1).all()
+    # With storm levels below every event's own values nothing changes
+    calm = {c: -1.0 for c in levels}
+    same = train.storm_stress(bundle, ev, calm)
+    assert np.allclose(same["p_critical_storm"], train.predict(bundle, ev)["p_critical"])
+    assert not same["storm_flips"].any()
+    assert train.storm_stress(bundle, ev.iloc[:0], levels).empty

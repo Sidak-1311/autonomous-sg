@@ -11,6 +11,10 @@ Models (scikit-learn HistGradientBoosting, 5-fold GroupKFold on event_id):
 - regressor for the change in log10 miss distance
 Each regressor must beat the latest-value baseline out of fold, or predict()
 falls back to it. Saves models/forecaster.joblib and models/cv_metrics.json.
+
+Also writes models/conformal.json (no training needed, --conformal-only):
+split-conformal bounds on final risk around risk_latest per tier_now group,
+with out-of-fold coverage, and the storm levels for storm_stress().
 """
 import argparse
 import json
@@ -37,6 +41,12 @@ SEED = 0
 FLOOR_PROB = 0.8
 # Risk regressors are fit and used only where the latest Pc is at least 1e-8
 RISK_NEAR = -8.0
+# Conformal interval on final risk: 90% coverage, per tier_now group
+INTERVAL_ALPHA = 0.1
+INTERVAL_MIN_N = 30
+# Storm stress test: space weather at this quantile of the data
+STORM_QUANTILE = 0.99
+STORM_COLS = ["F10", "AP", "F10_mean", "AP_mean"]
 
 # Readable names for drivers: (text when above the train median, text when below)
 DRIVER_TEXT = {
@@ -259,6 +269,83 @@ def predict(bundle: dict, ev_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(pred, index=ev_df.index)
 
 
+def _residual_bounds(resid: np.ndarray, alpha: float) -> tuple[float, float]:
+    """Split-conformal equal-tailed bounds with the finite-sample correction."""
+    n = len(resid)
+    level = min(1.0, np.ceil((n + 1) * (1 - alpha / 2)) / n)
+    return float(np.quantile(resid, 1 - level)), float(np.quantile(resid, level))
+
+
+def calibrate_interval(ev: pd.DataFrame, alpha: float = INTERVAL_ALPHA,
+                       n_folds: int = N_FOLDS) -> dict:
+    """Per-tier_now residual bounds for final risk around risk_latest, plus coverage
+    measured out of fold (calibrate on k-1 folds, check on the held-out one)."""
+    ev = ev[ev["has_target"]].reset_index(drop=True)
+    resid = (ev["risk_final"] - ev["risk_latest"]).to_numpy()
+    groups = ev["tier_now"].to_numpy()
+    calib = {"alpha": alpha, "center": "risk_latest",
+             **calibrate_interval_bounds(ev, resid, alpha)}
+    for g, d in calib["groups"].items():
+        d["n"] = int((groups == g).sum())
+    calib["pooled"]["n"] = int(len(resid))
+
+    covered = np.zeros(len(ev), bool)
+    folds = GroupKFold(n_splits=min(n_folds, ev["event_id"].nunique()))
+    for tr, va in folds.split(ev, groups=ev["event_id"]):
+        fold = calibrate_interval_bounds(ev.iloc[tr], resid[tr], alpha)
+        iv = risk_interval(ev.iloc[va], fold)
+        covered[va] = ((ev["risk_final"].iloc[va] >= iv["risk_lo"] - 1e-9)
+                       & (ev["risk_final"].iloc[va] <= iv["risk_hi"] + 1e-9)).to_numpy()
+    calib["coverage"] = float(covered.mean())
+    for g, d in calib["groups"].items():
+        d["coverage"] = float(covered[groups == g].mean())
+    return calib
+
+
+def calibrate_interval_bounds(ev: pd.DataFrame, resid: np.ndarray, alpha: float) -> dict:
+    """Bounds per tier_now group (groups under INTERVAL_MIN_N use the pooled ones)."""
+    groups = ev["tier_now"].to_numpy()
+    out = {"groups": {}, "pooled": dict(zip(["lo", "hi"], _residual_bounds(resid, alpha)))}
+    for g in np.unique(groups):
+        r = resid[groups == g]
+        if len(r) >= INTERVAL_MIN_N:
+            out["groups"][str(g)] = dict(zip(["lo", "hi"], _residual_bounds(r, alpha)))
+    return out
+
+
+def risk_interval(ev: pd.DataFrame, calib: dict) -> pd.DataFrame:
+    """Interval [risk_lo, risk_hi] (log10 Pc) the final risk falls in with ~1-alpha coverage."""
+    latest = ev["risk_latest"].to_numpy(float)
+    bounds = [calib["groups"].get(str(t), calib["pooled"]) for t in ev["tier_now"]]
+    lo = np.array([b["lo"] for b in bounds], float).reshape(-1)
+    hi = np.array([b["hi"] for b in bounds], float).reshape(-1)
+    return pd.DataFrame({"risk_lo": np.clip(latest + lo, RISK_FLOOR, 0.0),
+                         "risk_hi": np.clip(latest + hi, RISK_FLOOR, 0.0)}, index=ev.index)
+
+
+def storm_levels(ev: pd.DataFrame, q: float = STORM_QUANTILE) -> dict:
+    """Space-weather values at the data's own upper tail."""
+    return {c: float(ev[c].quantile(q)) for c in STORM_COLS}
+
+
+def storm_stress(bundle: dict, ev: pd.DataFrame, levels: dict | None = None) -> pd.DataFrame:
+    """P(crit) with solar flux / geomagnetic activity at storm levels, and which
+    events that change pushes over the alert threshold."""
+    levels = levels or bundle.get("storm_levels") or storm_levels(ev)
+    X = ev[bundle["features"]]
+    if len(X) == 0:
+        return pd.DataFrame(columns=["p_critical_storm", "storm_flips"], index=ev.index)
+    Xs = X.copy()
+    for c, v in levels.items():
+        if c in Xs:
+            Xs[c] = np.maximum(Xs[c], v)   # a storm never lowers activity
+    clf, thr = bundle["models"]["clf"], bundle["crit_threshold"]
+    p = clf.predict_proba(X)[:, 1]
+    p_storm = clf.predict_proba(Xs)[:, 1]
+    return pd.DataFrame({"p_critical_storm": p_storm,
+                         "storm_flips": (p_storm >= thr) & (p < thr)}, index=ev.index)
+
+
 def main():
     import joblib
 
@@ -267,17 +354,26 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sample", type=int, default=0, help="train on this many random events")
     ap.add_argument("--out", type=Path, default=MODELS_DIR)
+    ap.add_argument("--conformal-only", action="store_true",
+                    help="only write conformal.json (seconds, no model training)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     ev = build_event_table(load_all())
+    args.out.mkdir(parents=True, exist_ok=True)
+    calib = calibrate_interval(ev)
+    calib["storm_levels"] = storm_levels(ev)
+    (args.out / "conformal.json").write_text(json.dumps(calib, indent=2))
+    log.info("risk interval: %.0f%% target, %.1f%% measured out of fold %s", 100 * (1 - calib["alpha"]),
+             100 * calib["coverage"], {g: f"{d['coverage']:.1%}" for g, d in calib["groups"].items()})
+    if args.conformal_only:
+        return
     ev = ev[ev["has_target"]]
     if args.sample:
         ev = ev.sample(min(args.sample, len(ev)), random_state=SEED)
     log.info("training on %d events (%d Critical)", len(ev), (ev["tier_actual"] == CRITICAL).sum())
     bundle, cv = train(ev)
 
-    args.out.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, args.out / "forecaster.joblib")
     (args.out / "cv_metrics.json").write_text(json.dumps(cv["model"], indent=2, default=float))
     for name in ["baseline", "model"]:
