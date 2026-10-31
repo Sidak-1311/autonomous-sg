@@ -74,10 +74,53 @@ def missions(ev: pd.DataFrame) -> pd.DataFrame:
             .groupby("mission_id")[["alt_km", "area_m2"]].median())
 
 
-def cascade(ev: pd.DataFrame, half_width_km: float = SHELL_HALF_WIDTH_KM) -> pd.DataFrame:
-    """Cascade columns for each event (same index). NaN everywhere when the inputs aren't there."""
+# The real population, from the public CelesTrak SATCAT of all tracked objects (fetched once into
+# data/external/celestrak/satcat.csv; see celestrak.org/usage-policy.php). Radar cross-section stands in for physical cross-section; where it's missing (most payloads), the
+# catalogue's own mean for that object type.
+CATALOG_URL = "https://celestrak.org/pub/satcat.csv"
+DEFAULT_RCS_M2 = {"DEB": 0.2, "PAY": 2.5, "R/B": 7.5, "UNK": 1.0}
+CATALOG_COLUMNS = ["catalog_in_shell", "catalog_hits_1y"]
+
+
+CATALOG_PATH = "data/external/celestrak/satcat.csv"   # git-ignored; `python -m src.cascade` fetches it
+
+
+def fetch_catalog(path: str = CATALOG_PATH) -> str:
+    import urllib.request
+    from pathlib import Path
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(CATALOG_URL, path)
+    return path
+
+
+def load_catalog(path) -> pd.DataFrame:
+    """Objects still in Earth orbit with perigee under 2,000 km: mean altitude and cross-section, by altitude."""
+    s = pd.read_csv(path, usecols=["OBJECT_TYPE", "DECAY_DATE", "ORBIT_CENTER", "APOGEE", "PERIGEE", "RCS"],
+                    low_memory=False)
+    s = s[s.DECAY_DATE.isna() & (s.ORBIT_CENTER == "EA") & s.APOGEE.notna() & s.PERIGEE.notna() & (s.PERIGEE < 2000)]
+    area = s.RCS.where(s.RCS > 0, s.OBJECT_TYPE.map(DEFAULT_RCS_M2)).fillna(DEFAULT_RCS_M2["UNK"])
+    return (pd.DataFrame({"alt_km": (s.APOGEE + s.PERIGEE) / 2, "area_m2": area, "object_type": s.OBJECT_TYPE})
+            .sort_values("alt_km").reset_index(drop=True))
+
+
+def catalog_hits(fragments, alt_km, catalog: pd.DataFrame, half_width_km: float = SHELL_HALF_WIDTH_KM):
+    """(objects in the shell, expected collisions with them in the first year). Each object's rate is
+    n v A, so the expected count is n v T times the shell's summed cross-section (prefix sums over altitude)."""
+    alt = np.asarray(alt_km, float)
+    lo = np.searchsorted(catalog.alt_km.to_numpy(), alt - half_width_km, side="left")
+    hi = np.searchsorted(catalog.alt_km.to_numpy(), alt + half_width_km, side="right")
+    area_cum = np.concatenate([[0.0], np.cumsum(catalog.area_m2.to_numpy())])
+    density = np.asarray(fragments, float) / shell_volume_km3(alt, half_width_km)
+    return hi - lo, density * V_REL_KM_S * (area_cum[hi] - area_cum[lo]) / 1e6 * YEAR_S
+
+
+def cascade(ev: pd.DataFrame, half_width_km: float = SHELL_HALF_WIDTH_KM,
+            catalog: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Cascade columns for each event (same index). NaN everywhere when the inputs aren't there. With a
+    `catalog` (load_catalog), also the chain against every tracked object in the shell (CATALOG_COLUMNS)."""
+    cols = COLUMNS + (CATALOG_COLUMNS if catalog is not None else [])
     if ev.empty or not set(NEEDS) <= set(ev.columns):
-        return pd.DataFrame(np.nan, index=ev.index, columns=COLUMNS)
+        return pd.DataFrame(np.nan, index=ev.index, columns=cols)
     m_t = mass_kg(ev.t_span, ev.t_cd_area_over_mass, DEFAULT_MASS_KG["PAYLOAD"])
     default_c = ev.get("c_object_type", pd.Series("UNKNOWN", index=ev.index)).map(DEFAULT_MASS_KG).fillna(10.0)
     m_c = mass_kg(ev.c_span, ev.c_cd_area_over_mass, default_c)
@@ -91,9 +134,18 @@ def cascade(ev: pd.DataFrame, half_width_km: float = SHELL_HALF_WIDTH_KM) -> pd.
                 & (others_id[None, :] != ev.mission_id.to_numpy()[:, None]))
     p = p_hit(frags[:, None], alt[:, None], others_area[None, :]) * in_shell
     pc = 10 ** ev.get("risk_forecast", ev.get("risk_latest", pd.Series(np.nan, index=ev.index))).to_numpy(float)
+    extra = {}
+    if catalog is not None:
+        extra["catalog_in_shell"], extra["catalog_hits_1y"] = catalog_hits(frags, alt, catalog, half_width_km)
     return pd.DataFrame({
         "mass_primary_kg": m_t, "mass_secondary_kg": m_c, "energy_j_per_g": energy, "catastrophic": catastrophic,
         "frag_10cm": frags, "shell_alt_km": alt, "shell_missions": in_shell.sum(axis=1),
         "chain_p1y_max": p.max(axis=1, initial=0.0), "chain_hits_1y": p.sum(axis=1),
         "debris_expected": pc * frags,     # fragments to expect from this event, weighted by its Pc
+        **extra,
     }, index=ev.index)
+
+
+if __name__ == "__main__":
+    cat = load_catalog(fetch_catalog())
+    print(f"Fetched {CATALOG_URL} -> {CATALOG_PATH}: {len(cat):,} tracked LEO objects in orbit")

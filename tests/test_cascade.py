@@ -83,6 +83,43 @@ def test_unknown_object_type_uses_the_small_default():
     assert cz.cascade(ev).mass_secondary_kg[0] == 10.0
 
 
+CATALOG = pd.DataFrame({"alt_km": [640.0, 690.0, 700.0, 749.9, 760.0], "area_m2": [5.0, 1.0, 2.0, 4.0, 100.0],
+                        "object_type": "DEB"})
+
+
+def test_catalog_hits_count_only_objects_in_the_shell():
+    n, hits = cz.catalog_hits([1000.0], [700.0], CATALOG)   # shell 650-750 km: 690, 700, 749.9
+    assert n.tolist() == [3]
+    density = 1000.0 / cz.shell_volume_km3(700.0)
+    assert hits[0] == pytest.approx(density * cz.V_REL_KM_S * 7.0 / 1e6 * cz.YEAR_S)
+    assert cz.catalog_hits([0.0], [700.0], CATALOG)[1][0] == 0
+
+
+def test_catalog_hits_with_an_empty_shell_or_catalog():
+    assert cz.catalog_hits([1000.0], [300.0], CATALOG)[0].tolist() == [0]
+    n, hits = cz.catalog_hits([1000.0], [700.0], CATALOG.iloc[:0])
+    assert n.tolist() == [0] and hits.tolist() == [0.0]
+
+
+def test_catalog_columns_only_when_a_catalog_is_given():
+    ev = pd.DataFrame([event(0, 1, 700)])
+    assert set(cz.CATALOG_COLUMNS).isdisjoint(cz.cascade(ev).columns)
+    out = cz.cascade(ev, catalog=CATALOG)
+    assert out.catalog_in_shell[0] == 3 and out.catalog_hits_1y[0] > 0
+    assert list(cz.cascade(ev.drop(columns=["t_span"]), catalog=CATALOG).columns) == cz.COLUMNS + cz.CATALOG_COLUMNS
+
+
+def test_load_catalog_keeps_leo_objects_in_orbit(tmp_path):
+    csv = tmp_path / "satcat.csv"
+    pd.DataFrame({"OBJECT_TYPE": ["PAY", "DEB", "R/B", "PAY", "DEB"],
+                  "DECAY_DATE": [None, None, "2020-01-01", None, None], "ORBIT_CENTER": ["EA", "EA", "EA", "EA", "MO"],
+                  "APOGEE": [710, 520, 400, 36000, 100], "PERIGEE": [690, 480, 380, 35000, 90],
+                  "RCS": [None, 0.05, 3.0, 10.0, 1.0]}).to_csv(csv, index=False)
+    cat = cz.load_catalog(csv)
+    # decayed, geostationary and Moon-centred objects are out; a payload without RCS gets the payload default
+    assert cat.alt_km.tolist() == [500.0, 700.0] and cat.area_m2.tolist() == [0.05, cz.DEFAULT_RCS_M2["PAY"]]
+
+
 def test_on_real_test_data_if_present():
     from pathlib import Path
     path = Path(__file__).resolve().parent.parent / "data" / "test_data.csv"
