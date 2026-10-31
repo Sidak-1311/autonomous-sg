@@ -18,6 +18,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from dashboard import brief  # noqa: E402
 from src.physics import LEO_MEAN_MOTION, combined_sigma, dilution  # noqa: E402
 from src.score import _add_maneuver, _add_review  # noqa: E402  (the pipeline's own rules, reused by the stub)
 from src.tiering import (  # noqa: E402
@@ -62,15 +63,30 @@ def load(data_dir: str, stamp: tuple) -> tuple[pd.DataFrame, pd.DataFrame, str]:
         events = pd.read_parquet(PROCESSED / "events_scored.parquet")
         cdms = pd.read_parquet(PROCESSED / "cdms.parquet")
         sources = ", ".join(sorted(events.forecast_source.dropna().unique()))
-        if "pc_diluted" not in events:  # pipeline output from before the dilution flag
-            events = events.assign(pc_diluted=False, risk_potential=events.risk_latest)
-        if "maneuver_dr_m" not in events:  # ... or the maneuver suggestion
-            events = events.assign(maneuver_dr_m=np.nan, maneuver_dv_mps=np.nan)
-        if "needs_review" not in events:  # ... or the insufficient-evidence refusal
-            events = events.assign(needs_review=False, review_reason="")
-        return events, cdms, f"pipeline output ({sources})"
+        return with_defaults(events), cdms, f"pipeline output ({sources})"
     events, cdms = stub_from_raw(DATA / "test_data.csv")
-    return events, cdms, "stub from test_data.csv (no pipeline output yet)"
+    return with_defaults(events), cdms, "stub from test_data.csv (no pipeline output yet)"
+
+
+# Columns the pipeline added over time, with what an older output (or the stub) means by their absence.
+LATER_COLUMNS = {
+    "pc_diluted": lambda ev: False, "risk_potential": lambda ev: ev.risk_latest,
+    "maneuver_dr_m": lambda ev: np.nan, "maneuver_dv_mps": lambda ev: np.nan,
+    "needs_review": lambda ev: False, "review_reason": lambda ev: "",
+    "risk_lo": lambda ev: ev.risk_forecast, "risk_hi": lambda ev: ev.risk_forecast_q90,
+    "p_critical_storm": lambda ev: np.nan, "storm_flips": lambda ev: False,
+    "forecast_in_sample": lambda ev: ev.forecast_source == "model",  # before the flag, train rows were in-sample
+}
+
+
+def with_defaults(events: pd.DataFrame) -> pd.DataFrame:
+    return events.assign(**{col: fill(events) for col, fill in LATER_COLUMNS.items() if col not in events})
+
+
+@st.cache_data(show_spinner="Asking Gemini…")
+def cached_brief(fields_json: str) -> str:
+    """Keyed on the exact fields sent, so reruns and repeat clicks don't call the API again."""
+    return brief.explain(json.loads(fields_json), brief.api_key())
 
 
 def stamp() -> tuple:
@@ -156,11 +172,17 @@ queue_tab, detail_tab, fleet_tab, window_tab, eval_tab = st.tabs(
 with queue_tab:
     queue = queue_order(shown[(shown.tier_final != SAFE) | review])  # a refusal is never auto-cleared
     st.dataframe(queue[["event_id", "tier_final", "needs_review", "tier_now", "p_critical", "risk_latest", "risk_forecast",
-                        "miss_latest_m", "miss_forecast_m", "time_to_tca", "c_object_type", "pc_diluted", "reason", "drivers"]],
+                        "miss_latest_m", "miss_forecast_m", "risk_hi", "time_to_tca", "c_object_type", "storm_flips", "pc_diluted",
+                        "reason", "drivers"]],
                  hide_index=True, width="stretch", column_config={
                      "p_critical": st.column_config.ProgressColumn("P(critical)", min_value=0, max_value=1),
                      "risk_latest": st.column_config.NumberColumn("risk now", format="%.2f"),
                      "risk_forecast": st.column_config.NumberColumn("risk at TCA", format="%.2f"),
+                     "risk_hi": st.column_config.NumberColumn(
+                         "risk at TCA, 90% upper", format="%.2f",
+                         help="Upper end of the conformal 90% interval on the final log10 Pc."),
+                     "storm_flips": st.column_config.CheckboxColumn(
+                         "storm flips tier", help="Tier changes if F10/AP rise to geomagnetic-storm levels."),
                      "miss_latest_m": st.column_config.NumberColumn("miss now (m)", format="%d"),
                      "miss_forecast_m": st.column_config.NumberColumn("miss at TCA (m)", format="%d"),
                      "time_to_tca": st.column_config.NumberColumn("days to TCA", format="%.2f"),
@@ -177,7 +199,7 @@ with queue_tab:
     # The baseline ranks by the latest CDM alone (today's practice) and is always shown next to this queue.
     known = shown[shown.tier_actual.notna()]
     if (known.tier_actual == CRITICAL).any():
-        in_sample = (known.forecast_source == "model").any()  # the model was fit on these very events
+        in_sample = known.forecast_in_sample.astype(bool).any()  # the model was fit on these very events
         rankings = {"baseline: latest CDM": (known.assign(_r=known.tier_now.map(TIER_RANK))
                                              .sort_values(["_r", "risk_latest"], ascending=False)),
                     "this queue" + (" (in-sample)" if in_sample else ""): queue_order(known)}
@@ -226,6 +248,20 @@ with detail_tab:
                            f"{e.maneuver_dv_mps * 100:.1f} cm/s roughly {half_orbit:.0f} min (half an orbit) "
                            "before TCA. A first-order suggestion for the analyst to verify, not a command.")
 
+        with st.expander("Plain-English brief (Gemini)"):
+            sent = brief.facts(e.to_dict() | {"event_id": ev})
+            if why := brief.refusal(e.to_dict()):
+                st.info(why)
+            elif not brief.api_key():
+                st.info("Brief off: set GEMINI_API_KEY in the environment (or a git-ignored .env) to enable it.")
+            elif st.button("Explain this event"):
+                try:
+                    st.markdown(cached_brief(json.dumps(sent, sort_keys=True)))
+                except RuntimeError as err:
+                    st.error(f"Brief unavailable, so nothing is shown in its place: {err}")
+            st.caption("The model sees only these fields; the tier itself comes from the rules and the forecaster.")
+            st.json(sent, expanded=False)
+
         a, b = st.columns(2)
         risk = px.line(path, x="time_to_tca", y="risk", markers=True, title="Risk per CDM update")
         tier_bands(risk, "y", (RISK_CRITICAL, 0), (RISK_ELEVATED, RISK_CRITICAL))
@@ -234,8 +270,9 @@ with detail_tab:
         tier_bands(miss, "y", (1, MISS_CRITICAL_M), (MISS_CRITICAL_M, MISS_ELEVATED_M))
         if forecast:
             risk.add_trace(go.Scatter(x=[0], y=[e.risk_forecast], mode="markers", marker_symbol="diamond",
-                                      name="forecast", error_y=dict(type="data", symmetric=False,
-                                                                    array=[e.risk_forecast_q90 - e.risk_forecast])))
+                                      name="forecast, 90% interval",
+                                      error_y=dict(type="data", symmetric=False, array=[e.risk_hi - e.risk_forecast],
+                                                   arrayminus=[e.risk_forecast - e.risk_lo])))
             miss.add_trace(go.Scatter(x=[0], y=[e.miss_forecast_m], mode="markers", marker_symbol="diamond",
                                       name="forecast"))
         for fig, final in ((risk, e.risk_final), (miss, e.miss_final_m)):
@@ -285,6 +322,19 @@ with fleet_tab:
                         labels={y: "Risk, log10(Pc)", "tier_final": "tier"})
     hist.add_annotation(x=RISK_FLOOR, y=0, yanchor="bottom", text="floor: Pc ≈ 0", showarrow=False)
     right.plotly_chart(hist, width="stretch")
+
+    st.subheader("Space-weather stress test")
+    flips = shown[shown.storm_flips.astype(bool)]
+    st.caption(f"{len(flips):,} of {len(shown):,} events change tier if F10 / AP rise to geomagnetic-storm levels "
+               "(denser upper atmosphere, more drag uncertainty). Check these first when a storm is forecast.")
+    if len(flips):
+        st.dataframe(flips.assign(jump=flips.p_critical_storm - flips.p_critical)
+                     .sort_values("jump", ascending=False)
+                     [["event_id", "tier_final", "p_critical", "p_critical_storm", "miss_latest_m", "c_object_type"]],
+                     hide_index=True, width="stretch", column_config={
+                         "p_critical": st.column_config.ProgressColumn("P(critical) now", min_value=0, max_value=1),
+                         "p_critical_storm": st.column_config.ProgressColumn("P(critical) in a storm",
+                                                                             min_value=0, max_value=1)})
 
 with eval_tab:
     st.subheader("Baseline vs model (cross-validated on train events)")

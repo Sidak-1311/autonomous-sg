@@ -6,14 +6,31 @@ thresholds, the -30 risk floor, single-CDM events, events with no CDM at the dec
 types, missing model columns (NaN p_critical / drivers / reason), empty data and filters that match nothing.
 """
 import json
+import sys
+import urllib.error
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from dashboard import brief  # noqa: E402  (the module object the app imports, so patches reach it)
+
 APP = str(Path(__file__).resolve().parent / "app.py")
+
+
+@pytest.fixture(autouse=True)
+def isolated(monkeypatch):
+    """No cached loads or briefs leak between tests, and no real key or network is ever used."""
+    st.cache_data.clear()
+    monkeypatch.setattr(brief, "api_key", lambda *a: None)
+
+    def no_network(*a, **k):
+        raise AssertionError("a test reached the Gemini API")
+    monkeypatch.setattr(brief, "call_gemini", no_network)
 COLS = ["event_id", "time_to_tca", "risk", "max_risk_estimate", "miss_distance", "relative_speed",
         "relative_position_r", "relative_position_t", "relative_position_n", "c_object_type"]
 
@@ -80,7 +97,7 @@ def by_label(elements, label):
 
 
 def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None,
-                   review: tuple = (False, True, False, False, True)) -> Path:
+                   review: tuple = (False, True, False, False, True), train_in_sample: bool = True) -> Path:
     """Contract-shaped pipeline output for events 0-4, train outcomes included; drop removes columns."""
     raw = RAW[RAW.event_id != 5]
     cdms = raw.assign(split="test", tier="SAFE")
@@ -98,10 +115,13 @@ def write_pipeline(tmp_path: Path, drop: tuple = (), metrics: dict | None = None
         # CRITICAL events only: event 0 needs a 250 m outward shift, event 3 is Critical by forecast alone
         "maneuver_dr_m": [250.0, np.nan, np.nan, 0.0, np.nan], "maneuver_dv_mps": [0.03, np.nan, np.nan, 0.0, np.nan],
         "needs_review": list(review), "review_reason": ["only one CDM" if r else "" for r in review],
+        "risk_lo": -30.0, "risk_hi": latest.risk + 1, "p_critical_storm": [0.95, np.nan, 0.6, np.nan, 0.0],
+        "storm_flips": [False, False, True, False, False],  # event 2: SAFE now, Critical in a storm
     })
-    train = ev.assign(split="train", risk_final=-5.0, miss_final_m=800.0,
+    train = ev.assign(split="train", risk_final=-5.0, miss_final_m=800.0, forecast_in_sample=train_in_sample,
                       tier_actual=["CRITICAL", "SAFE", "SAFE", "CRITICAL", "SAFE"])
-    events = pd.concat([ev.assign(split="test", tier_actual=None), train]).drop(columns=list(drop))
+    events = (pd.concat([ev.assign(split="test", tier_actual=None, forecast_in_sample=False), train])
+              .drop(columns=list(drop)))
     (tmp_path / "processed").mkdir()
     events.to_parquet(tmp_path / "processed" / "events_scored.parquet")
     cdms.to_parquet(tmp_path / "processed" / "cdms.parquet")
@@ -124,6 +144,62 @@ def test_pipeline_output_with_missing_model_columns(tmp_path, monkeypatch):
     # Flagged events 2 and 4 both ended SAFE: the dashboard must report the flag's failure, not praise it.
     assert any("Measured failure" in w.value and "0.0% vs 66.7%" in w.value for w in at.warning)
     assert not at.success
+
+
+def test_brief_explains_the_selected_event(tmp_path, monkeypatch):
+    monkeypatch.setattr(brief, "api_key", lambda *a: "k")
+    monkeypatch.setattr(brief, "call_gemini", lambda prompt, key, model, timeout=20: f"FAKE BRIEF via {model}")
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    by_label(at.button, "Explain this event").click().run()
+    assert not at.exception, at.exception
+    assert any(f"FAKE BRIEF via {brief.MODELS[0]}" in m.value for m in at.markdown)
+
+
+def test_brief_refuses_without_calling_the_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(brief, "api_key", lambda *a: "k")  # call_gemini still raises if reached
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    by_label(at.selectbox, "Event (worst first)").set_value(1).run()  # needs_review
+    assert not at.exception, at.exception
+    assert any(i.value.startswith("No brief: too little evidence") for i in at.info)
+    assert not any(b.label == "Explain this event" for b in at.button)
+
+
+def test_brief_without_a_key_says_so(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    assert any(i.value.startswith("Brief off") for i in at.info)
+
+
+def test_brief_failure_is_shown_not_hidden(tmp_path, monkeypatch):
+    monkeypatch.setattr(brief, "api_key", lambda *a: "k")
+
+    def down(prompt, key, model, timeout=20):
+        raise urllib.error.URLError("offline")
+    monkeypatch.setattr(brief, "call_gemini", down)
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    by_label(at.button, "Explain this event").click().run()
+    assert any(e.value.startswith("Brief unavailable") and "offline" in e.value for e in at.error)
+
+
+def test_out_of_fold_train_rows_are_not_called_in_sample(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path, train_in_sample=False), monkeypatch)
+    at.sidebar.selectbox[0].set_value("train").run()
+    assert any("top 2 of 5" in c.value for c in at.caption)
+    assert not any(w.value.startswith("In-sample") for w in at.warning)
+
+
+def test_storm_stress_lists_the_flipped_events(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path), monkeypatch)
+    assert any(c.value.startswith("1 of 5 events change tier") for c in at.caption)
+    table = next(d.value for d in at.dataframe if "p_critical_storm" in d.value)
+    assert list(table.event_id) == [2]
+
+
+def test_pipeline_output_from_before_the_storm_and_conformal_columns(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path, drop=("risk_lo", "risk_hi", "p_critical_storm", "storm_flips",
+                                               "forecast_in_sample")), monkeypatch)
+    assert any(c.value.startswith("0 of 5 events change tier") for c in at.caption)
+    at.sidebar.selectbox[0].set_value("train").run()
+    assert any(w.value.startswith("In-sample") for w in at.warning)  # old output: model rows were in-sample
 
 
 def test_pipeline_output_from_before_the_dilution_flag(tmp_path, monkeypatch):
