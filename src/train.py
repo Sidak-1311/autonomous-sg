@@ -10,7 +10,8 @@ Models (scikit-learn HistGradientBoosting, 5-fold GroupKFold on event_id):
   the median and 90th percentile of delta = risk_final - risk_latest on the rest
 - regressor for the change in log10 miss distance
 Each regressor must beat the latest-value baseline out of fold, or predict()
-falls back to it. Saves models/forecaster.joblib and models/cv_metrics.json.
+falls back to it. Saves models/forecaster.joblib, models/cv_metrics.json and
+models/oof_predictions.parquet (out-of-fold forecasts for the train events).
 
 Also writes models/conformal.json (no training needed, --conformal-only):
 split-conformal bounds on final risk around risk_latest per tier_now group,
@@ -232,7 +233,21 @@ def train(ev: pd.DataFrame, n_folds: int = N_FOLDS) -> tuple[dict, dict]:
         "use_risk_model": cv["use_risk_model"],
         "use_miss_model": cv["use_miss_model"],
     }
+    cv["oof_table"] = pd.DataFrame({"event_id": ev["event_id"].to_numpy(), **cv["oof"]})
     return bundle, cv
+
+
+OOF_COLS = ["risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical"]
+
+
+def oof_forecast(fc: pd.DataFrame, ev: pd.DataFrame, oof: pd.DataFrame) -> pd.DataFrame:
+    """Swap in out-of-fold forecasts for train events the final model was fit on,
+    so nothing scored on train rows is in-sample. fc and ev share an index."""
+    fc = fc.copy()
+    lookup = oof.set_index("event_id")[OOF_COLS]
+    rows = (ev["split"] == "train") & ev["event_id"].isin(lookup.index)
+    fc.loc[rows, OOF_COLS] = lookup.loc[ev.loc[rows, "event_id"]].to_numpy()
+    return fc
 
 
 def _drivers(models: dict, X: pd.DataFrame, medians: pd.Series, p: np.ndarray, top: int = 3):
@@ -376,6 +391,7 @@ def main():
 
     joblib.dump(bundle, args.out / "forecaster.joblib")
     (args.out / "cv_metrics.json").write_text(json.dumps(cv["model"], indent=2, default=float))
+    cv["oof_table"].to_parquet(args.out / "oof_predictions.parquet", index=False)
     for name in ["baseline", "model"]:
         m = cv[name]
         log.info("%-8s recall_crit %.3f precision_crit %.3f f2 %.3f mse_hr %.3f loss %.3f",

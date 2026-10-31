@@ -138,3 +138,21 @@ def test_storm_stress_raises_activity_only():
     assert np.allclose(same["p_critical_storm"], train.predict(bundle, ev)["p_critical"])
     assert not same["storm_flips"].any()
     assert train.storm_stress(bundle, ev.iloc[:0], levels).empty
+
+
+def test_oof_forecast_replaces_only_fitted_train_rows():
+    ev = _events()
+    bundle, cv = train.train(ev, n_folds=3)
+    oof = cv["oof_table"]
+    assert len(oof) == ev["has_target"].sum() and oof["event_id"].is_unique
+    assert oof[train.OOF_COLS].notna().all().all()
+
+    both = pd.concat([ev, ev.assign(split="test")], ignore_index=True)   # same ids in test
+    fc = train.predict(bundle, both)
+    out = train.oof_forecast(fc, both, oof)
+    is_train = both["split"] == "train"
+    want = oof.set_index("event_id").loc[both.loc[is_train, "event_id"], "p_critical"].to_numpy()
+    assert np.allclose(out.loc[is_train, "p_critical"], want)
+    assert out.loc[~is_train].equals(fc.loc[~is_train])            # test rows untouched
+    assert (out["drivers"] == fc["drivers"]).all()
+    assert train.oof_forecast(fc.iloc[:0], both.iloc[:0], oof).empty
