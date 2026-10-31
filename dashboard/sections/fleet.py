@@ -177,9 +177,10 @@ def render(ctx):
         with left:
             _md(style.cell("Pc above the floor", ""))
             _pc_histogram(shown, y, floor)
-            st.caption(f"{int(floor.sum()):,} events ({floor.mean() if len(floor) else 0:.0%}) sit at the floor, "
-                       f"Pc < 10⁻³⁰, and are left out so the rest stays readable. Dotted lines: the Elevated "
-                       f"({format_pc(RISK_ELEVATED)}) and Critical ({format_pc(RISK_CRITICAL)}) thresholds.")
+            st.caption(style.sci(f"{int(floor.sum()):,} events ({floor.mean() if len(floor) else 0:.0%}) sit at the "
+                                 f"floor, Pc < 10⁻³⁰, and are left out so the rest stays readable. Dotted lines: the "
+                                 f"Elevated ({format_pc(RISK_ELEVATED)}) and Critical ({format_pc(RISK_CRITICAL)}) "
+                                 "thresholds."), unsafe_allow_html=True)
         with right:
             _storm_cell(shown)
     _storm_table(shown)

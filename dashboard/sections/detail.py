@@ -88,7 +88,7 @@ def render(ctx):
     if forecast and (bar := tier_probability_bar(e)):
         st.markdown(bar, unsafe_allow_html=True)
     st.markdown(f'<p class="bm-lede" style="max-width:none;line-height:1.55">{str(e.c_object_type).capitalize()} · '
-                f"{reason_lines(text(e.reason))}</p>", unsafe_allow_html=True)
+                f"{style.sci(reason_lines(text(e.reason)))}</p>", unsafe_allow_html=True)
     if text(e.drivers):
         st.markdown(f'{style.label("Drivers")}<p style="margin-top:0.2rem">{text(e.drivers)}</p>',
                     unsafe_allow_html=True)
