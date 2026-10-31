@@ -125,3 +125,9 @@ def test_steps_light_one_row_and_number_from_01():
 
 def test_accent_is_not_yellow_and_not_a_tier():
     assert style.ACCENT == "#ECF0BD" and style.BG == "#000000"
+
+
+def test_status_pill_is_neutral_text():
+    html = style.status_pill("watch")
+    assert ">WATCH<" in html and "bm-status" in html
+    assert not any(c in html for c in TIER_COLORS.values())

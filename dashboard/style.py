@@ -195,6 +195,8 @@ span[data-baseweb="tag"] *, [data-testid="stMultiSelectTagsContainer"] > span > 
   white-space: normal; max-width: 16rem; overflow: hidden; color: {MUTED}; font-size: 0.84rem; cursor: help; }}
 .bm-tier {{ display: inline-flex; align-items: center; gap: 0.45rem; font: 500 0.68rem {MONO};
   letter-spacing: 0.06em; padding: 0.26rem 0.6rem 0.26rem 0.5rem; border-radius: 999px; }}
+.bm-status {{ color: {TEXT}; border: 1px dashed #5A5A55; padding: 0.22rem 0.6rem; }}
+.bm-status::before {{ display: none; }}
 .bm-tier::before {{ content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }}
 .bm-bar {{ display: inline-flex; align-items: center; gap: 0.7rem; min-width: 7.5rem; }}
 .bm-bar .track {{ flex: 1; height: 2px; background: {LINE}; overflow: hidden; }}
@@ -348,6 +350,11 @@ def tier_pill(tier) -> str:
         return f'<span class="dim">{escape(str(tier or "—"))}</span>'
     c = TIER_COLORS[tier]
     return f'<span class="bm-tier" style="color:{c};background:{c}1F">{tier}</span>'
+
+
+def status_pill(status: str) -> str:
+    """A non-tier status (WATCH, REVIEW) as an outline pill in neutral text: never a tier colour."""
+    return f'<span class="bm-tier bm-status">{escape(str(status).upper())}</span>'
 
 
 def prob_bar(p) -> str:
