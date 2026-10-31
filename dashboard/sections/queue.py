@@ -12,12 +12,17 @@ def render(ctx):
     shown, queued = ctx.shown, ctx.queued
     queue = queue_order(shown[queued])
     n_crit, n_review = int((queue.tier_final == CRITICAL).sum()), int(queue.needs_review.astype(bool).sum())
+    n_open = int((queue.decision == "").sum())
 
-    st.markdown(style.section("01", "Operations queue"), unsafe_allow_html=True)
-    st.markdown(f'<p class="bm-lede"><b>{len(queue):,} events</b> need an analyst, sorted by tier and then by the '
-                f'calibrated probability of being Critical at closest approach. <b>{n_crit:,}</b> are Critical; '
-                f'<b>{n_review:,}</b> have too little evidence to forecast and stay here whatever their tier.</p>',
-                unsafe_allow_html=True)
+    st.markdown(style.heading("01", "Operations queue",
+                              "Every event that needs an analyst, worst first: by tier, then by the calibrated "
+                              "probability of being Critical at closest approach."), unsafe_allow_html=True)
+    st.markdown(style.cells([
+        style.stat(f"{len(queue):,}", "In the queue", sub="non-Safe, plus every refusal"),
+        style.stat(f"{n_crit:,}", "Critical", "CRITICAL", sub="maneuver decision needed"),
+        style.stat(f"{n_review:,}", "Insufficient evidence", sub="no forecast; an analyst decides"),
+        style.stat(f"{n_open:,}", "Awaiting a decision", sub="no signed analyst decision yet"),
+    ]), unsafe_allow_html=True)
 
     filtered = _filter(queue)
     shown_rows = filtered.head(TABLE_ROWS)
