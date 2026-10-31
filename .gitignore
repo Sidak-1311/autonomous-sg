@@ -11,6 +11,9 @@ venv/
 .ipynb_checkpoints/
 .pytest_cache/
 
+# Claude Code session files
+.claude/scheduled_tasks.lock
+
 # OS / editor
 .DS_Store
 .vscode/

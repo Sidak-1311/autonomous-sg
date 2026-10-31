@@ -58,13 +58,17 @@ def model_forecast(ev: pd.DataFrame):
     return train.predict(bundle, ev), bundle.get("crit_threshold", 0.5)
 
 
-def _reason(row) -> str:
+def _reason(row, threshold: float) -> str:
     now = row.tier_now.capitalize()
     fc = row.tier_forecast.capitalize()
     text = f"{now} now ({rule_fired(row.risk_latest, row.miss_latest_m)})"
     if row.forecast_source == "model":
         text += f"; forecast {fc} (q90 Pc 1e{row.risk_forecast_q90:.1f}, " \
-                f"miss {row.miss_forecast_m / 1000:.2f} km, P(crit) {row.p_critical:.0%})"
+                f"miss {row.miss_forecast_m / 1000:.2f} km, P(crit) {row.p_critical:.1%}"
+        if row.p_critical >= threshold:
+            # The threshold is set low on purpose to catch 95% of Critical events
+            text += f" ≥ alert threshold {threshold:.1%}, set to catch 95% of Criticals"
+        text += ")"
     if abs(row.risk_slope) >= 0.1 and row.n_cdms > 1:
         direction = "up" if row.risk_slope > 0 else "down"
         text += f"; risk trending {direction} {abs(row.risk_slope):.1f} orders/day"
@@ -130,7 +134,7 @@ def score(cdms: pd.DataFrame) -> pd.DataFrame:
     ev["tier_forecast"] = tier_array(ev["risk_forecast_q90"], ev["miss_forecast_m"])
     ev.loc[ev["p_critical"] >= threshold, "tier_forecast"] = CRITICAL
     ev["tier_final"] = [worse(a, b) for a, b in zip(ev["tier_now"], ev["tier_forecast"])]
-    ev["reason"] = [_reason(r) for r in ev.itertuples()]
+    ev["reason"] = [_reason(r, threshold) for r in ev.itertuples()]
     _add_maneuver(ev)
     _add_dilution(ev)
     ev.loc[ev["pc_diluted"], "reason"] += (
