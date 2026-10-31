@@ -13,6 +13,12 @@ Each regressor must beat the latest-value baseline out of fold, or predict()
 falls back to it. Saves models/forecaster.joblib, models/cv_metrics.json and
 models/oof_predictions.parquet (out-of-fold forecasts for the train events).
 
+Targets are the organisers' labels (final = last CDM of every train event
+with a CDM at the cutoff). The reported numbers come from a fixed 80/20
+event_id holdout (models/holdout_*.json/parquet): models, calibration and the
+alert threshold are fit on the 80% only. A second classifier gives
+P(Elevated or worse), so predict() returns p_safe / p_elevated / p_critical.
+
 The balanced classifier's scores are not probabilities, so they are mapped
 through an isotonic calibration fit on the OOF scores (--calibrate-only redoes
 just that in seconds); models/calibration.json reports Brier and reliability.
@@ -29,17 +35,21 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 
 from src.features import FEATURES, build_event_table
 from src.metrics import evaluate
-from src.tiering import CRITICAL, RISK_ELEVATED, RISK_FLOOR, tier_array, worse
+from src.tiering import CRITICAL, ELEVATED, RISK_ELEVATED, RISK_FLOOR, tier_array, worse
 
 log = logging.getLogger(__name__)
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 TARGET_RECALL = 0.95
 N_FOLDS = 5
+# Reported numbers come from a fixed 80/20 split of train events by event_id
+# (the organisers' protocol); the deployed bundle is then refit on all events.
+HOLDOUT_FRAC = 0.2
+HOLDOUT_SEED = 42
 MAX_ITER = 300
 SEED = 0
 # Forecast the -30 floor only when the hurdle classifier is this sure
@@ -118,6 +128,7 @@ class _Constant:
 def _targets(ev: pd.DataFrame) -> dict:
     return {
         "crit": (ev["tier_actual"] == CRITICAL).to_numpy(),
+        "elev": ev["tier_actual"].isin([ELEVATED, CRITICAL]).to_numpy(),
         "delta": (ev["risk_final"] - ev["risk_latest"]).to_numpy(),
         "dmiss": (np.log10(ev["miss_final_m"].clip(lower=1.0)) - ev["log_miss"]).to_numpy(),
     }
@@ -139,6 +150,7 @@ def _fit(X: pd.DataFrame, y: dict) -> dict:
         live = ~floor if (~floor).any() else np.ones(len(X), bool)
     return {
         "clf": _classifier(y["crit"])(X, y["crit"]),
+        "clf_elev": _classifier(y["elev"])(X, y["elev"]),
         "clf_floor": _classifier(floor)(X, floor),
         "reg_delta": _reg(loss="absolute_error").fit(X[live], y["delta"][live]),
         "reg_q90": _reg(loss="quantile", quantile=0.9).fit(X[live], y["delta"][live]),
@@ -164,6 +176,9 @@ def _raw_predict(models: dict, X: pd.DataFrame, risk_latest, log_miss) -> dict:
         "risk_forecast_q90": np.maximum(q90, risk),
         "miss_forecast_m": 10 ** log_miss_fc,
         "p_critical": models["clf"].predict_proba(X)[:, 1],
+        # bundles saved before the three-tier probabilities have no clf_elev
+        "p_elevated_up": (models["clf_elev"].predict_proba(X)[:, 1] if "clf_elev" in models
+                          else np.full(len(X), np.nan)),
     }
 
 
@@ -186,7 +201,7 @@ def cross_validate(ev: pd.DataFrame, n_folds: int = N_FOLDS) -> dict:
     """Out-of-fold predictions plus model-vs-baseline decisions and metrics."""
     X, y = ev[FEATURES], _targets(ev)
     oof = {k: np.zeros(len(ev)) for k in
-           ["risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical"]}
+           ["risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical", "p_elevated_up"]}
     folds = GroupKFold(n_splits=min(n_folds, ev["event_id"].nunique()))
     for k, (tr, va) in enumerate(folds.split(X, groups=ev["event_id"])):
         models = _fit(X.iloc[tr], {n: v[tr] for n, v in y.items()})
@@ -243,6 +258,16 @@ def train(ev: pd.DataFrame, n_folds: int = N_FOLDS) -> tuple[dict, dict]:
 
 
 OOF_COLS = ["risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical"]
+TIER_PROB_COLS = ["p_safe", "p_elevated", "p_critical"]
+PREDICT_COLS = ["risk_forecast", "risk_forecast_q90", "miss_forecast_m", *TIER_PROB_COLS, "drivers"]
+
+
+def tier_probs(p_critical, p_elevated_up) -> dict:
+    """Three tier probabilities that sum to 1 from two calibrated ordinal ones:
+    P(Critical) and P(Elevated or worse). Where the two cross, P(Elevated) is 0."""
+    pc = np.asarray(p_critical, float)
+    pe = np.maximum(np.asarray(p_elevated_up, float), pc)
+    return {"p_safe": 1 - pe, "p_elevated": pe - pc, "p_critical": pc}
 
 
 def oof_forecast(fc: pd.DataFrame, ev: pd.DataFrame, oof: pd.DataFrame) -> pd.DataFrame:
@@ -280,15 +305,15 @@ def predict(bundle: dict, ev_df: pd.DataFrame) -> pd.DataFrame:
     """Forecast for each event row: risk, q90 risk, miss, P(crit) and top drivers."""
     X = ev_df[bundle["features"]]
     if len(X) == 0:
-        return pd.DataFrame(columns=["risk_forecast", "risk_forecast_q90", "miss_forecast_m",
-                                     "p_critical", "drivers"], index=ev_df.index)
+        return pd.DataFrame(columns=PREDICT_COLS, index=ev_df.index)
     pred = _raw_predict(bundle["models"], X, ev_df["risk_latest"], ev_df["log_miss"])
     pred = _apply_fallback(pred, bundle["use_risk_model"], bundle["use_miss_model"],
                            ev_df["risk_latest"], ev_df["miss_latest_m"])
     # Drivers rank on the raw score; calibration is monotone so the ranking is the same
     pred["drivers"] = _drivers(bundle["models"], X, bundle["medians"], pred["p_critical"])
-    pred["p_critical"] = calibrate_p(pred["p_critical"], bundle.get("calibration"))
-    return pd.DataFrame(pred, index=ev_df.index)
+    pred.update(tier_probs(calibrate_p(pred["p_critical"], bundle.get("calibration")),
+                           calibrate_p(pred.pop("p_elevated_up"), bundle.get("calibration_elev"))))
+    return pd.DataFrame(pred, index=ev_df.index)[PREDICT_COLS]
 
 
 def _isotonic_map(p: np.ndarray, y: np.ndarray) -> dict:
@@ -366,14 +391,32 @@ def fit_calibration(p_raw, y, groups, n_folds: int = N_FOLDS) -> dict:
     }
 
 
-def apply_calibration(bundle: dict, oof: pd.DataFrame, cal: dict) -> tuple[dict, pd.DataFrame]:
-    """Bundle and OOF table that output calibrated P(crit) (raw score kept as p_critical_raw)."""
+def apply_calibration(bundle: dict, oof: pd.DataFrame, cal: dict,
+                      cal_elev: dict | None = None) -> tuple[dict, pd.DataFrame]:
+    """Bundle and OOF table that output calibrated P(crit) (raw score kept as
+    p_critical_raw) and, with cal_elev, the three tier probabilities."""
     bundle = {**bundle, "calibration": cal["map"], "crit_threshold": cal["crit_threshold"],
               "crit_threshold_raw": cal["crit_threshold_raw"]}
     oof = oof.copy()
     oof["p_critical_raw"] = oof.get("p_critical_raw", oof["p_critical"])
     oof["p_critical"] = cal["p_calibrated"]
+    if cal_elev is not None:
+        bundle["calibration_elev"] = cal_elev["map"]
+        oof["p_elevated_up_raw"] = oof.get("p_elevated_up_raw", oof["p_elevated_up"])
+        probs = tier_probs(oof["p_critical"], cal_elev["p_calibrated"])
+        oof["p_safe"], oof["p_elevated"] = probs["p_safe"], probs["p_elevated"]
     return bundle, oof
+
+
+def calibrate_both(oof: pd.DataFrame, ev: pd.DataFrame, n_folds: int = N_FOLDS) -> tuple[dict, dict]:
+    """Isotonic calibration of P(Critical) and P(Elevated or worse) on OOF scores.
+    ev holds the truth for oof's event_ids (train events with a target)."""
+    truth = ev.set_index("event_id")["tier_actual"].loc[oof["event_id"]]
+    groups = oof["event_id"].to_numpy()
+    cal = fit_calibration(oof["p_critical"].to_numpy(), (truth == CRITICAL).to_numpy(), groups, n_folds)
+    cal_elev = fit_calibration(oof["p_elevated_up"].to_numpy(),
+                               truth.isin([ELEVATED, CRITICAL]).to_numpy(), groups, n_folds)
+    return cal, cal_elev
 
 
 def _residual_bounds(resid: np.ndarray, alpha: float) -> tuple[float, float]:
@@ -430,6 +473,50 @@ def risk_interval(ev: pd.DataFrame, calib: dict) -> pd.DataFrame:
                          "risk_hi": np.clip(latest + hi, RISK_FLOOR, 0.0)}, index=ev.index)
 
 
+def holdout_mask(ev: pd.DataFrame, frac: float = HOLDOUT_FRAC, seed: int = HOLDOUT_SEED) -> pd.Series:
+    """True for the events held out for evaluation. Split by event_id, so no
+    event has CDMs on both sides; deterministic for a given event set."""
+    ids = ev["event_id"].to_numpy()
+    out = pd.Series(False, index=ev.index)
+    if len(np.unique(ids)) < 2:
+        return out
+    _, te = next(GroupShuffleSplit(n_splits=1, test_size=frac, random_state=seed)
+                 .split(ids, groups=ids))
+    out.iloc[te] = True
+    return out
+
+
+HOLDOUT_COLS = ["event_id", "final_ttca", "risk_final", "miss_final_m", "tier_actual", "tier_now",
+                "risk_latest", "tier_final", *TIER_PROB_COLS, "risk_forecast", "risk_forecast_q90",
+                "miss_forecast_m"]
+
+
+def evaluate_holdout(ev: pd.DataFrame, n_folds: int = N_FOLDS) -> tuple[pd.DataFrame, dict]:
+    """Fit everything (models, fallback choice, calibration, alert threshold) on
+    the 80% part only, then predict the untouched 20%. Returns the held-out
+    predictions and baseline-vs-model metrics on them."""
+    ev = ev[ev["has_target"]].reset_index(drop=True)
+    held = holdout_mask(ev).to_numpy()
+    dev, test = ev[~held], ev[held].copy()
+    bundle, cv = train(dev, n_folds)
+    bundle, _ = apply_calibration(bundle, cv["oof_table"], *calibrate_both(cv["oof_table"], dev, n_folds))
+    pred = predict(bundle, test)
+    for c in [*TIER_PROB_COLS, "risk_forecast", "risk_forecast_q90", "miss_forecast_m"]:
+        test[c] = pred[c]
+    test["tier_final"] = _tier_final(test["tier_now"], test["risk_forecast_q90"],
+                                     test["miss_forecast_m"], test["p_critical"],
+                                     bundle["crit_threshold"])
+    rf, mf = test["risk_final"], test["miss_final_m"]
+    metrics = {
+        "split": {"frac": HOLDOUT_FRAC, "seed": HOLDOUT_SEED, "by": "event_id",
+                  "n_dev": int(len(dev)), "n_holdout": int(len(test))},
+        "crit_threshold": bundle["crit_threshold"],
+        "baseline": evaluate(rf, mf, test["risk_latest"], test["tier_now"]),
+        "model": evaluate(rf, mf, test["risk_forecast"], test["tier_final"]),
+    }
+    return test[HOLDOUT_COLS].reset_index(drop=True), metrics
+
+
 def storm_levels(ev: pd.DataFrame, q: float = STORM_QUANTILE) -> dict:
     """Space-weather values at the data's own upper tail."""
     return {c: float(ev[c].quantile(q)) for c in STORM_COLS}
@@ -466,6 +553,8 @@ def main():
                     help="only write conformal.json (seconds, no model training)")
     ap.add_argument("--calibrate-only", action="store_true",
                     help="only (re)fit P(crit) calibration on the saved OOF scores (seconds)")
+    ap.add_argument("--holdout-only", action="store_true",
+                    help="only the 80/20 held-out evaluation (no deployed bundle)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -473,8 +562,9 @@ def main():
     if args.calibrate_only:
         bundle = joblib.load(args.out / "forecaster.joblib")
         oof = pd.read_parquet(args.out / "oof_predictions.parquet")
-        if "p_critical_raw" in oof:
-            oof["p_critical"] = oof["p_critical_raw"]
+        for c in ["p_critical", "p_elevated_up"]:
+            if f"{c}_raw" in oof:
+                oof[c] = oof[f"{c}_raw"]
         _calibrate_and_save(bundle, oof, ev, args.out)
         return
     args.out.mkdir(parents=True, exist_ok=True)
@@ -488,6 +578,17 @@ def main():
     ev = ev[ev["has_target"]]
     if args.sample:
         ev = ev.sample(min(args.sample, len(ev)), random_state=SEED)
+    test, hm = evaluate_holdout(ev)
+    test.to_parquet(args.out / "holdout_predictions.parquet", index=False)
+    (args.out / "holdout_ids.json").write_text(json.dumps(sorted(int(i) for i in test["event_id"])))
+    (args.out / "holdout_metrics.json").write_text(json.dumps(hm, indent=2, default=float))
+    for name in ["baseline", "model"]:
+        m = hm[name]
+        log.info("HOLDOUT %-8s recall_crit %.3f %s precision_crit %.3f %s (n=%d, %d Critical)", name,
+                 m["recall_critical"], m["ci95"].get("recall_critical"), m["precision_critical"],
+                 m["ci95"].get("precision_critical"), m["n_events"], m["n_critical"])
+    if args.holdout_only:
+        return
     log.info("training on %d events (%d Critical)", len(ev), (ev["tier_actual"] == CRITICAL).sum())
     bundle, cv = train(ev)
 
@@ -504,13 +605,13 @@ def main():
 def _calibrate_and_save(bundle: dict, oof: pd.DataFrame, ev: pd.DataFrame, out: Path):
     import joblib
 
-    truth = ev[(ev["split"] == "train") & ev["has_target"]].set_index("event_id")["tier_actual"]
-    y = (truth.loc[oof["event_id"]] == CRITICAL).to_numpy()
-    cal = fit_calibration(oof["p_critical"].to_numpy(), y, oof["event_id"].to_numpy())
-    bundle, oof = apply_calibration(bundle, oof, cal)
+    cal, cal_elev = calibrate_both(oof, ev[(ev["split"] == "train") & ev["has_target"]])
+    bundle, oof = apply_calibration(bundle, oof, cal, cal_elev)
     joblib.dump(bundle, out / "forecaster.joblib")
     oof.to_parquet(out / "oof_predictions.parquet", index=False)
     report = {k: v for k, v in cal.items() if k not in ("map", "p_calibrated")}
+    report["elevated_or_worse"] = {k: v for k, v in cal_elev.items()
+                                   if k not in ("map", "p_calibrated", "crit_threshold", "crit_threshold_raw")}
     (out / "calibration.json").write_text(json.dumps(report, indent=2))
     log.info("P(crit) calibration: Brier %.4f raw -> %.4f calibrated (climatology %.4f); "
              "alert threshold %.4f raw -> %.4f calibrated", cal["brier_raw"],

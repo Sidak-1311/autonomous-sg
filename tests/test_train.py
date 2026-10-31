@@ -63,7 +63,7 @@ def test_train_and_predict_contract():
     out = train.predict(bundle, test)
     assert list(out.index) == list(test.index)
     assert list(out.columns) == ["risk_forecast", "risk_forecast_q90", "miss_forecast_m",
-                                 "p_critical", "drivers"]
+                                 "p_safe", "p_elevated", "p_critical", "drivers"]
     assert out[["risk_forecast", "risk_forecast_q90", "miss_forecast_m", "p_critical"]].notna().all().all()
     assert (out["risk_forecast_q90"] >= out["risk_forecast"]).all()
     assert out["risk_forecast"].between(RISK_FLOOR, 0).all()
@@ -215,3 +215,50 @@ def test_calibration_never_claims_certainty():
     assert np.all(np.diff(m["y"]) >= 0)
     one = train._isotonic_map(np.array([0.2, 0.4]), np.array([True, True]))   # a single block
     assert 0 < one["y"][0] < 1
+
+
+def test_holdout_mask_splits_by_event_and_is_deterministic():
+    ev = _events(n=50)
+    m = train.holdout_mask(ev)
+    assert m.sum() == 10 and m.equals(train.holdout_mask(ev))   # 20%, same every run
+    assert not set(ev.loc[m, "event_id"]) & set(ev.loc[~m, "event_id"])
+    assert not train.holdout_mask(ev.iloc[:1]).any()             # one event: nothing to hold out
+    assert not train.holdout_mask(ev.iloc[:0]).any()
+
+
+def test_evaluate_holdout_scores_only_unseen_events():
+    ev = _events(n=100)
+    test, m = train.evaluate_holdout(ev, n_folds=3)
+    held = ev[ev["has_target"]]
+    assert set(test["event_id"]) == set(held.loc[train.holdout_mask(held.reset_index(drop=True)).to_numpy(),
+                                                  "event_id"])
+    assert list(test.columns) == train.HOLDOUT_COLS
+    assert m["split"]["n_dev"] + m["split"]["n_holdout"] == len(held)
+    assert test["p_critical"].between(0, 1).all()
+    assert m["model"]["recall_critical"] >= m["baseline"]["recall_critical"]   # worse() never lowers a tier
+
+
+def test_tier_probs_sum_to_one_and_never_negative():
+    pc = np.array([0.0, 0.2, 0.9, 0.5, 1.0])
+    pe = np.array([0.0, 0.7, 0.95, 0.3, 1.0])   # 4th: ordinal scores cross
+    p = train.tier_probs(pc, pe)
+    total = p["p_safe"] + p["p_elevated"] + p["p_critical"]
+    assert np.allclose(total, 1) and all((v >= 0).all() for v in p.values())
+    assert p["p_elevated"][3] == 0 and p["p_critical"][3] == 0.5
+    assert np.allclose(p["p_elevated"][:3], [0.0, 0.5, 0.05])
+
+
+def test_predict_tier_probabilities_after_calibration():
+    ev = _events(n=100)
+    bundle, cv = train.train(ev, n_folds=3)
+    fitted = ev[ev["has_target"]]
+    bundle, oof = train.apply_calibration(bundle, cv["oof_table"], *train.calibrate_both(cv["oof_table"], fitted, 3))
+    assert {"calibration", "calibration_elev"} <= set(bundle)
+    assert np.allclose(oof[["p_safe", "p_elevated", "p_critical"]].sum(axis=1), 1)
+    out = train.predict(bundle, ev.head(30))
+    probs = out[["p_safe", "p_elevated", "p_critical"]]
+    assert np.allclose(probs.sum(axis=1), 1) and (probs >= 0).all().all()
+    # old bundles without the Elevated classifier still predict P(crit)
+    old = {**bundle, "models": {k: v for k, v in bundle["models"].items() if k != "clf_elev"}}
+    old.pop("calibration_elev")
+    assert train.predict(old, ev.head(5))["p_critical"].notna().all()
