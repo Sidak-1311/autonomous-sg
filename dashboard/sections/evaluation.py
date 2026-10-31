@@ -202,13 +202,50 @@ def render(ctx):
     for col, (title, body) in zip(st.columns(len(failures)) if failures else [], failures):
         col.markdown(failure_card(title, body), unsafe_allow_html=True)
     misses(load_error_analysis())
+    lockbox((metrics or {}).get("test_lockbox"), load_error_analysis(LOCKBOX_ANALYSIS))
 
 
 ERROR_ANALYSIS = ROOT / "models" / "error_analysis.json"   # written by `python -m src.error_analysis`
+LOCKBOX_ANALYSIS = ROOT / "models" / "error_analysis_lockbox.json"   # `python -m src.error_analysis --lockbox`
 
 
-def load_error_analysis() -> dict | None:
-    return json.loads(ERROR_ANALYSIS.read_text()) if ERROR_ANALYSIS.exists() else None
+def load_error_analysis(path=None) -> dict | None:
+    path = path or ERROR_ANALYSIS
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def confusion_grid(conf: dict) -> pd.DataFrame:
+    return pd.DataFrame(conf["matrix"], index=[f"actual {t}" for t in conf["labels"]],
+                        columns=[f"predicted {t}" for t in conf["labels"]])
+
+
+def lockbox(test: dict | None, ea: dict | None):
+    """The hidden ESA Kelvins test labels: the frozen model scored once, baseline on the same 2,167 events."""
+    if not test:
+        return
+    st.markdown(style.section("05.H", "Hidden test set"), unsafe_allow_html=True)
+    base, model = test["baseline"], test["model"]
+    st.markdown(f'<p class="bm-lede">The ESA Kelvins test outcomes, published after the competition: '
+                f"<b>{test['n']:,} events</b>, <b>{model['n_critical']}</b> truly Critical. Scored once on the frozen "
+                "model; never used to train, tune or choose.</p>", unsafe_allow_html=True)
+    cards = [big_card(f"{model[k]:.1%}", f"{name} · model", f"baseline {base[k]:.1%} · {ci_text(model, k, True)}")
+             for k, name in (("recall_critical", "Critical recall"), ("precision_critical", "Critical precision"))]
+    for col, html in zip(st.columns(len(cards)), cards):
+        col.markdown(html, unsafe_allow_html=True)
+    left, right = st.columns(2)
+    for col, (who, run) in zip((left, right), (("Baseline: latest CDM", base), ("Model", model))):
+        if "confusion" in run:
+            col.markdown(style.label(f"{who} · rows actual, columns predicted"), unsafe_allow_html=True)
+            col.dataframe(confusion_grid(run["confusion"]), width="stretch")
+    if ea and ea.get("missed_examples"):
+        missed = pd.DataFrame(ea["missed_examples"]).assign(
+            pc=lambda d: [f"{format_pc(a)} → {format_pc(b)}" for a, b in zip(d.risk_decision, d.risk_final)],
+            miss=lambda d: [f"{format_miss(a)} → {format_miss(b)}" for a, b in zip(d.miss_decision_m, d.miss_final_m)],
+            cause=lambda d: d.cause.str.replace("_", " "))
+        st.markdown(style.label(f"Every Critical the model missed here ({len(missed)}) · at the decision point → at TCA"),
+                    unsafe_allow_html=True)
+        st.dataframe(missed[["event_id", "tier_issued", "cause", "pc", "miss"]], hide_index=True, width="stretch",
+                     column_config={"event_id": "event", "tier_issued": "tier issued", "pc": "Pc", "miss": "miss"})
 
 
 def misses(ea: dict | None):

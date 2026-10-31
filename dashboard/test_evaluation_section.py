@@ -43,6 +43,41 @@ def test_confusion_matrix_and_miss_causes(tmp_path, monkeypatch):
     assert "37 missed, 27 of them silently" in text and "(12 per catch)" in text
 
 
+LOCKBOX = {"n": 2167, "note": "lockbox",
+           "baseline": {**METRIC_RUN, "recall_critical": 0.824, "precision_critical": 0.855,
+                        "confusion": {"labels": ["SAFE", "ELEVATED", "CRITICAL"],
+                                      "matrix": [[1435, 56, 3], [38, 418, 24], [8, 26, 159]]}},
+           "model": {**METRIC_RUN, "recall_critical": 0.933, "precision_critical": 0.457, "n_critical": 193,
+                     "ci95": {"recall_critical": [0.89, 0.97]},
+                     "confusion": {"labels": ["SAFE", "ELEVATED", "CRITICAL"],
+                                   "matrix": [[1426, 47, 21], [33, 254, 193], [7, 6, 180]]}}}
+MISSED = {"missed_examples": [{"event_id": 1640, "cause": "late_jump", "risk_decision": -23.0, "risk_final": -4.1,
+                               "miss_decision_m": 8883.0, "miss_final_m": 117.0, "tier_issued": "SAFE"},
+                              {"event_id": 93, "cause": "no_evidence_after_cutoff", "risk_decision": -30.0,
+                               "risk_final": -30.0, "miss_decision_m": 15629.0, "miss_final_m": 330.0,
+                               "tier_issued": "SAFE"}]}
+
+
+def test_hidden_test_set_block(tmp_path, monkeypatch):
+    path = tmp_path / "lockbox.json"
+    path.write_text(json.dumps(MISSED))
+    monkeypatch.setattr(evaluation, "LOCKBOX_ANALYSIS", path)
+    at = render(write_pipeline(tmp_path / "data", metrics={"baseline": METRIC_RUN, "test_lockbox": LOCKBOX}),
+                monkeypatch)
+    text = page_text(at)
+    assert "<b>2,167 events</b>, <b>193</b> truly Critical" in text and "baseline 82.4% · 95% CI 89.0%–97.0%" in text
+    model_cm = [d.value for d in at.dataframe if "predicted CRITICAL" in d.value][1]
+    assert model_cm.loc["actual CRITICAL", "predicted SAFE"] == 7
+    missed = next(d.value for d in at.dataframe if "tier_issued" in d.value)
+    assert list(missed.event_id) == [1640, 93] and missed.miss[0] == "8,883 m → 117 m"
+    assert missed.pc[1] == "<10⁻³⁰ → <10⁻³⁰" and missed.cause[1] == "no evidence after cutoff"
+
+
+def test_no_lockbox_no_block(tmp_path, monkeypatch):
+    at = render(write_pipeline(tmp_path, metrics={"baseline": METRIC_RUN}), monkeypatch)
+    assert "Hidden test set" not in page_text(at)
+
+
 def test_no_error_analysis_file_shows_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluation, "ERROR_ANALYSIS", tmp_path / "absent.json")
     at = render(write_pipeline(tmp_path / "data"), monkeypatch)
